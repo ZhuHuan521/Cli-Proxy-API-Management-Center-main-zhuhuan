@@ -21,6 +21,7 @@ import { hasDisableAllModelsRule } from '@/components/providers/utils';
 import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import type { ModelInfo } from '@/utils/models';
 import { PROVIDER_DESCRIPTORS } from '../../descriptors';
+import { modelAliasToFormEntry } from '../../modelAliasForm';
 import { readThinkingLevels } from '../../thinkingLevels';
 import type {
   ApiKeyEntryInput,
@@ -195,15 +196,7 @@ function buildInitialForm(
       disableCooling: cfg.disableCooling === true,
       priority: cfg.priority,
       models: cfg.models?.length
-        ? cfg.models.map((m) => ({
-            name: m.name,
-            alias: m.alias ?? '',
-            priority: m.priority,
-            testModel: m.testModel,
-            image: m.image === true,
-            thinkingJson: formatJsonObject(m.thinking),
-            thinkingLevels: readThinkingLevels(m.thinking),
-          }))
+        ? cfg.models.map(modelAliasToFormEntry)
         : [emptyModel()],
       headers: cfg.headers
         ? Object.entries(cfg.headers).map(([k, v]) => ({ key: k, value: String(v) }))
@@ -240,14 +233,7 @@ function buildInitialForm(
     priority: cfg.priority,
     weight: cfg.weight,
     models: cfg.models?.length
-      ? cfg.models.map((m) => ({
-          name: m.name,
-          alias: m.alias ?? '',
-          priority: m.priority,
-          testModel: m.testModel,
-          thinkingJson: formatJsonObject(m.thinking),
-          thinkingLevels: readThinkingLevels(m.thinking),
-        }))
+      ? cfg.models.map(modelAliasToFormEntry)
       : [emptyModel()],
     headers: cfg.headers
       ? Object.entries(cfg.headers).map(([k, v]) => ({ key: k, value: String(v) }))

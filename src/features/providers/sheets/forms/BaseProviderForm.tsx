@@ -105,6 +105,7 @@ function buildInitialForm(
           existingApiKey: readCommandCodeApiKey(entry),
           proxyUrl: entry.proxy_url?.trim() || '',
           weight: entry.weight,
+          priority: entry.priority,
           disabled: entry.disabled === true,
         }))
       : cfg.api_key?.trim()
@@ -114,6 +115,7 @@ function buildInitialForm(
               existingApiKey: cfg.api_key.trim(),
               proxyUrl: '',
               weight: undefined,
+              priority: undefined,
               disabled: false,
             },
           ]
@@ -490,6 +492,14 @@ export function BaseProviderForm({
     }
     if (weights.some((weight) => weight !== undefined && weight > MAX_CREDENTIAL_WEIGHT)) {
       return t('providersPage.form.validation.weightMax', { max: MAX_CREDENTIAL_WEIGHT });
+    }
+    if (
+      brand === 'commandcode' &&
+      (form.apiKeyEntries ?? []).some(
+        (entry) => entry.priority !== undefined && !Number.isSafeInteger(entry.priority)
+      )
+    ) {
+      return t('plugin_management.invalid_priority');
     }
     if (
       brand === 'commandcode' &&
@@ -915,6 +925,7 @@ export function BaseProviderForm({
             isTestingAny={connectivity.isTestingAny}
             showConnectivity={brand !== 'commandcode'}
             showEntryDisabled={brand === 'commandcode'}
+            showPriority={brand === 'commandcode'}
             onUpdate={(idx, patch) =>
               updateField(
                 'apiKeyEntries',

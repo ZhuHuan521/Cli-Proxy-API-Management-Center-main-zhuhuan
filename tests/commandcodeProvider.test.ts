@@ -182,6 +182,38 @@ describe('CommandCode provider management', () => {
     expect(patch.api_key).toBeNull();
   });
 
+  test('edits and preserves per-key scheduler priority', () => {
+    const patch = buildCommandCodeConfig(
+      {
+        apiKey: '',
+        name: '',
+        baseUrl: '',
+        proxyUrl: '',
+        prefix: '',
+        disabled: false,
+        models: [],
+        headers: [],
+        excludedModelsText: '',
+        apiKeyEntries: [
+          {
+            apiKey: 'user-key',
+            existingApiKey: 'user-key',
+            proxyUrl: '',
+            weight: 2,
+            priority: 17,
+          },
+        ],
+      },
+      {
+        api_keys: [{ key: 'user-key', weight: 2, priority: 5, custom_route: 'keep-me' }],
+      }
+    );
+
+    expect(patch.api_keys).toEqual([
+      { key: 'user-key', weight: 2, priority: 17, custom_route: 'keep-me' },
+    ]);
+  });
+
   test('serializes custom model context and thinking capabilities', () => {
     const patch = buildCommandCodeConfig(
       {

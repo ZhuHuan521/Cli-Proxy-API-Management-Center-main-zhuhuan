@@ -178,6 +178,8 @@ export const buildCommandCodeConfig = (
           else delete nextEntry.proxy_url;
           if (entry.weight === undefined) delete nextEntry.weight;
           else nextEntry.weight = entry.weight;
+          if (entry.priority === undefined) delete nextEntry.priority;
+          else nextEntry.priority = entry.priority;
           if (entry.disabled === true) nextEntry.disabled = true;
           else delete nextEntry.disabled;
           return nextEntry;

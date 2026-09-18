@@ -32,6 +32,8 @@ interface ApiKeyEntriesEditorProps {
   showConnectivity?: boolean;
   /** CommandCode key pools can disable individual members. */
   showEntryDisabled?: boolean;
+  /** CommandCode key pools support per-key scheduler priority. */
+  showPriority?: boolean;
   onUpdate: (idx: number, patch: Partial<ApiKeyEntryInput>) => void;
   /** Appends a new blank entry and returns its index. */
   onAdd: () => number;
@@ -48,6 +50,7 @@ export function ApiKeyEntriesEditor({
   isTestingAny,
   showConnectivity = true,
   showEntryDisabled = false,
+  showPriority = false,
   onUpdate,
   onAdd,
   onRemove,
@@ -272,6 +275,24 @@ export function ApiKeyEntriesEditor({
                   />
                   <span className={styles.labelHint}>{t('providersPage.form.weightHint')}</span>
                 </div>
+                {showPriority ? (
+                  <div className={styles.field}>
+                    <label className={styles.label}>{t('providersPage.form.priority')}</label>
+                    <input
+                      className={styles.input}
+                      type="number"
+                      step="1"
+                      value={entry.priority ?? ''}
+                      onChange={(e) =>
+                        onUpdate(idx, {
+                          priority: e.target.value === '' ? undefined : Number(e.target.value),
+                        })
+                      }
+                      disabled={mutating}
+                      placeholder={t('providersPage.form.priorityPlaceholder')}
+                    />
+                  </div>
+                ) : null}
                 {showEntryDisabled ? (
                   <label className={styles.checkboxRow}>
                     <input

@@ -166,6 +166,7 @@ export interface ApiKeyEntryInput {
   existingApiKey?: string;
   proxyUrl: string;
   weight?: number;
+  priority?: number;
   authIndex?: string;
   disabled?: boolean;
 }
@@ -188,6 +189,7 @@ export interface CommandCodeAPIKeyEntry {
   /** Legacy/plugin-auth spelling accepted when reading an existing pool. */
   api_key?: string;
   weight?: number;
+  priority?: number;
   proxy_url?: string;
   disabled?: boolean;
   [key: string]: unknown;

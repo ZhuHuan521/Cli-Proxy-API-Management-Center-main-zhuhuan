@@ -13,6 +13,7 @@ export type ProviderBrand =
   | 'claude'
   | 'vertex'
   | 'openaiCompatibility'
+  | 'commandcode'
   | 'apikeyFun'
   | 'fennoAI'
   | 'qiniuCloud'
@@ -34,6 +35,7 @@ export type ProviderResourceSelector =
   | { brand: 'claude'; apiKey: string; baseUrl?: string; index: number }
   | { brand: 'vertex'; apiKey: string; baseUrl?: string; index: number }
   | { brand: 'openaiCompatibility'; name: string; index: number }
+  | { brand: 'commandcode'; index: number }
   | {
       brand: 'apikeyFun';
       openaiIndices: number[];
@@ -67,6 +69,7 @@ export interface ProviderResourceFlags {
   cloakEnabled?: boolean;
   claudeCodeCliProfile?: boolean;
   websockets?: boolean;
+  sharedScheduling?: boolean;
   protocols?: string[];
 }
 
@@ -164,6 +167,65 @@ export interface ApiKeyEntryInput {
   proxyUrl: string;
   weight?: number;
   authIndex?: string;
+  disabled?: boolean;
+}
+
+export interface CommandCodeModelEntry {
+  alias?: string;
+  name?: string;
+  display_name?: string;
+  priority?: number;
+  /** CommandCode plugin schema uses snake_case; legacy host-shaped configs may use kebab-case. */
+  max_context_length?: number;
+  thinking?: Record<string, unknown>;
+  test_model?: string;
+  input_modalities?: string[];
+  [key: string]: unknown;
+}
+
+export interface CommandCodeAPIKeyEntry {
+  key?: string;
+  /** Legacy/plugin-auth spelling accepted when reading an existing pool. */
+  api_key?: string;
+  weight?: number;
+  proxy_url?: string;
+  disabled?: boolean;
+  [key: string]: unknown;
+}
+
+/** Resolve a CommandCode pool member without exposing its secret in UI code. */
+export const readCommandCodeApiKey = (entry?: CommandCodeAPIKeyEntry): string => {
+  if (!entry) return '';
+  const key = typeof entry.key === 'string' ? entry.key.trim() : '';
+  if (key) return key;
+  return typeof entry.api_key === 'string' ? entry.api_key.trim() : '';
+};
+
+export interface CommandCodePluginConfig {
+  enabled?: boolean;
+  priority?: number;
+  shared_scheduling?: boolean;
+  models?: CommandCodeModelEntry[];
+  api_key?: string;
+  api_keys?: CommandCodeAPIKeyEntry[];
+  proxy_url?: string;
+  base_url?: string;
+  project_slug?: string;
+  protocol_version?: string;
+  fingerprint_salt?: string;
+  device_project_dir?: string;
+  cli_mode?: string;
+  cli_session_mode?: string;
+  empty_system_placeholder?: boolean;
+  use_provider_models?: boolean;
+  model_refresh_interval_ms?: number;
+  zdr?: boolean;
+  stream_idle_ms?: number;
+  nonstream_idle_ms?: number;
+  max_body_mb?: number;
+  max_inflight?: number;
+  client_drain_timeout_ms?: number;
+  [key: string]: unknown;
 }
 
 export interface CloakInput {
@@ -201,6 +263,8 @@ export interface ProviderEntryFormInput {
   /** OpenAI persists this; Gemini/Claude use it for one-off connectivity tests. */
   testModel?: string;
   apiKeyEntries?: ApiKeyEntryInput[];
+  /** CommandCode-only toggle for exposing bare model names to the host scheduler. */
+  sharedScheduling?: boolean;
   /** APIKEY.FUN stores one grouped key per platform protocol. */
   sponsorKeyEntries?: SponsorKeyEntryInput[];
 }

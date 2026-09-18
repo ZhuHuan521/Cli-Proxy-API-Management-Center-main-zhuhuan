@@ -11,8 +11,13 @@ import { isRecord } from '@/utils/helpers';
 const DEFAULT_CLAUDE_BASE_URL = 'https://api.anthropic.com';
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com';
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
+export const DEFAULT_COMMANDCODE_PROTOCOL_VERSION = '1.53.1';
 const CLAUDE_MODELS_IN_FLIGHT = new Map<string, Promise<ReturnType<typeof normalizeModelList>>>();
 const GEMINI_MODELS_IN_FLIGHT = new Map<string, Promise<ReturnType<typeof normalizeModelList>>>();
+const COMMANDCODE_MODELS_IN_FLIGHT = new Map<
+  string,
+  Promise<ReturnType<typeof normalizeModelList>>
+>();
 
 const buildRequestSignature = (
   url: string,
@@ -41,6 +46,15 @@ const buildV1ModelsEndpoint = (baseUrl: string): string => {
   if (/\/v1\/models$/i.test(trimmed)) return trimmed;
   if (/\/v1$/i.test(trimmed)) return `${trimmed}/models`;
   return `${trimmed}/v1/models`;
+};
+
+/** CommandCode exposes its catalog below /provider/v1/models rather than /v1/models. */
+export const buildCommandCodeModelsEndpoint = (baseUrl: string): string => {
+  const normalized = normalizeApiBase(baseUrl);
+  if (!normalized) return '';
+  let trimmed = normalized.replace(/\/+$/g, '');
+  trimmed = trimmed.replace(/\/provider\/v1(?:\/(?:models|chat\/completions|responses))?$/i, '');
+  return `${trimmed}/provider/v1/models`;
 };
 
 const buildClaudeModelsEndpoint = (baseUrl: string): string => {
@@ -139,6 +153,67 @@ export const modelsApi = {
 
     const payload = result.body ?? result.bodyText;
     return normalizeModelList(payload, { dedupe: true });
+  },
+
+  /**
+   * Fetch CommandCode's provider catalog from /provider/v1/models through the
+   * authenticated management api-call bridge.
+   */
+  async fetchCommandCodeModelsViaApiCall(
+    baseUrl: string,
+    apiKey?: string,
+    headers: Record<string, string> = {},
+    authIndex?: string,
+    protocolVersion = DEFAULT_COMMANDCODE_PROTOCOL_VERSION
+  ) {
+    const endpoint = buildCommandCodeModelsEndpoint(baseUrl);
+    if (!endpoint) {
+      throw new Error('Invalid base url');
+    }
+
+    const trimmedAuthIndex = authIndex?.trim() || undefined;
+    const resolvedHeaders = { ...headers };
+    const trimmedApiKey = String(apiKey ?? '').trim();
+    if (trimmedApiKey && !hasHeader(resolvedHeaders, 'authorization')) {
+      resolvedHeaders.Authorization = `Bearer ${trimmedApiKey}`;
+    } else if (trimmedAuthIndex && !hasHeader(resolvedHeaders, 'authorization')) {
+      resolvedHeaders.Authorization = 'Bearer $TOKEN$';
+    }
+    if (!hasHeader(resolvedHeaders, 'x-cli-environment')) {
+      resolvedHeaders['x-cli-environment'] = 'production';
+    }
+    if (!hasHeader(resolvedHeaders, 'x-command-code-version')) {
+      resolvedHeaders['x-command-code-version'] =
+        String(protocolVersion || DEFAULT_COMMANDCODE_PROTOCOL_VERSION).trim() ||
+        DEFAULT_COMMANDCODE_PROTOCOL_VERSION;
+    }
+
+    const signature = buildRequestSignature(endpoint, resolvedHeaders, trimmedAuthIndex);
+    const existing = COMMANDCODE_MODELS_IN_FLIGHT.get(signature);
+    if (existing) return existing;
+
+    const request = (async () => {
+      const result = await apiCallApi.request({
+        authIndex: trimmedAuthIndex,
+        method: 'GET',
+        url: endpoint,
+        header: Object.keys(resolvedHeaders).length ? resolvedHeaders : undefined,
+      });
+
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        throw new Error(getApiCallErrorMessage(result));
+      }
+
+      const payload = result.body ?? result.bodyText;
+      return normalizeModelList(payload, { dedupe: true });
+    })();
+
+    COMMANDCODE_MODELS_IN_FLIGHT.set(signature, request);
+    try {
+      return await request;
+    } finally {
+      COMMANDCODE_MODELS_IN_FLIGHT.delete(signature);
+    }
   },
 
   /**

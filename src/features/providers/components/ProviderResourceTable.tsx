@@ -136,6 +136,16 @@ export function ProviderResourceTable({
       if (r.brand === 'claude' && r.flags.claudeCodeCliProfile) {
         items.push(renderFlagTag('cli-profile', t('providersPage.table.cliProfileTag')));
       }
+      if (r.brand === 'commandcode') {
+        items.push(
+          renderFlagTag(
+            'shared-scheduling',
+            r.flags.sharedScheduling
+              ? t('providersPage.table.sharedSchedulingTag')
+              : t('providersPage.table.directRoutingTag')
+          )
+        );
+      }
     }
     return <div className={styles.metricsCell}>{items}</div>;
   };

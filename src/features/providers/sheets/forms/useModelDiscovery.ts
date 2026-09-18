@@ -12,6 +12,7 @@ export const MODEL_DISCOVERY_BRANDS: ReadonlyArray<ProviderBrand> = [
   'xai',
   'claude',
   'openaiCompatibility',
+  'commandcode',
 ];
 
 export const isModelDiscoveryBrand = (brand: ProviderBrand): boolean =>
@@ -25,6 +26,7 @@ export interface UseModelDiscoveryArgs {
   apiKey?: string;
   fallbackApiKey?: string;
   authIndex?: string;
+  protocolVersion?: string;
 }
 
 export interface UseModelDiscoveryResult {
@@ -38,7 +40,16 @@ export interface UseModelDiscoveryResult {
 }
 
 export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscoveryResult {
-  const { brand, baseUrl, formHeaders, apiKeyEntries, apiKey, fallbackApiKey, authIndex } = args;
+  const {
+    brand,
+    baseUrl,
+    formHeaders,
+    apiKeyEntries,
+    apiKey,
+    fallbackApiKey,
+    authIndex,
+    protocolVersion,
+  } = args;
 
   const available = isModelDiscoveryBrand(brand);
   const [loading, setLoading] = useState(false);
@@ -69,6 +80,25 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
           key,
           baseHeaders,
           resolvedAuthIndex
+        );
+      } else if (brand === 'commandcode') {
+        const hasKeyPool = (apiKeyEntries ?? []).length > 0;
+        const firstEntry = (apiKeyEntries ?? []).find(
+          (entry) =>
+            entry.disabled !== true &&
+            ((entry.apiKey ?? '').trim() || (entry.existingApiKey ?? '').trim())
+        );
+        const key =
+          (firstEntry?.apiKey ?? '').trim() ||
+          (firstEntry?.existingApiKey ?? '').trim() ||
+          (apiKey ?? '').trim() ||
+          (hasKeyPool ? '' : (fallbackApiKey ?? '').trim());
+        next = await modelsApi.fetchCommandCodeModelsViaApiCall(
+          baseUrl,
+          key,
+          baseHeaders,
+          resolvedAuthIndex,
+          protocolVersion
         );
       } else if (brand === 'claude') {
         const key = (apiKey ?? '').trim() || (fallbackApiKey ?? '').trim();
@@ -113,7 +143,17 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
     } finally {
       setLoading(false);
     }
-  }, [available, apiKey, apiKeyEntries, authIndex, baseUrl, brand, fallbackApiKey, formHeaders]);
+  }, [
+    available,
+    apiKey,
+    apiKeyEntries,
+    authIndex,
+    baseUrl,
+    brand,
+    fallbackApiKey,
+    formHeaders,
+    protocolVersion,
+  ]);
 
   const reset = useCallback(() => {
     setModels([]);
@@ -132,10 +172,11 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
       apiKey ?? '',
       fallbackApiKey ?? '',
       authIndex ?? '',
+      protocolVersion ?? '',
       headerSig,
       entriesSig,
     ].join('||');
-  }, [apiKey, apiKeyEntries, authIndex, baseUrl, fallbackApiKey, formHeaders]);
+  }, [apiKey, apiKeyEntries, authIndex, baseUrl, fallbackApiKey, formHeaders, protocolVersion]);
 
   const lastSignatureRef = useRef(inputSignature);
   useEffect(() => {

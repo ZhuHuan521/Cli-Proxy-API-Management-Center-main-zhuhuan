@@ -106,6 +106,17 @@ export function ResourceDetailView({ resource, usageByProvider }: ResourceDetail
     ['baseUrl', resource.baseUrl ?? t('providersPage.status.notSet')],
     ['proxyUrl', resource.proxyUrl ?? t('providersPage.status.notSet')],
     ['prefix', resource.prefix ?? t('providersPage.status.none')],
+    ['priority', String(resource.priority)],
+    ...(resource.brand === 'commandcode'
+      ? [
+          [
+            'sharedScheduling',
+            resource.flags.sharedScheduling
+              ? t('providersPage.table.sharedSchedulingTag')
+              : t('providersPage.table.directRoutingTag'),
+          ] as [string, string],
+        ]
+      : []),
     ['models', String(resource.modelCount)],
     ['headers', String(resource.headerCount)],
   ];

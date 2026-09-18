@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { isCommandCodePlugin } from '@/pages/oauthProviderCards';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -369,6 +370,15 @@ export function PluginsPage() {
     }));
   };
 
+  const handleRawJsonChange = (value: string) => {
+    updateDraft((current) => ({
+      ...current,
+      rawJson: value,
+      rawJsonTouched: true,
+      errors: { ...current.errors, rawJson: '' },
+    }));
+  };
+
   const renderFieldEditor = (field: PluginConfigField) => {
     if (!draft) return null;
     const fieldType = normalizePluginConfigFieldType(field);
@@ -606,7 +616,7 @@ export function PluginsPage() {
                           ? t('plugin_management.configured')
                           : t('plugin_management.not_configured')}
                       </span>
-                      {plugin.supportsOAuth ? (
+                      {plugin.supportsOAuth && !isCommandCodePlugin(plugin, plugin.oauthProvider ?? '') ? (
                         <span className={styles.badge}>{t('plugin_management.oauth')}</span>
                       ) : null}
                     </div>
@@ -749,7 +759,25 @@ export function PluginsPage() {
               {editingPlugin.configFields.length > 0 ? (
                 editingPlugin.configFields.map((field) => renderFieldEditor(field))
               ) : (
-                <div className={styles.emptyConfig}>{t('plugin_management.no_config_fields')}</div>
+                <div className={styles.formField}>
+                  <label htmlFor={`plugin-raw-config-${editingPlugin.id}`}>
+                    {t('plugin_management.raw_json_label')}
+                  </label>
+                  <textarea
+                    id={`plugin-raw-config-${editingPlugin.id}`}
+                    className={styles.textarea}
+                    rows={12}
+                    value={draft.rawJson}
+                    onChange={(event) => handleRawJsonChange(event.target.value)}
+                    spellCheck={false}
+                  />
+                  <span className={styles.fieldHint}>
+                    {t('plugin_management.raw_json_hint')}
+                  </span>
+                  {draft.errors.rawJson ? (
+                    <span className={styles.fieldError}>{draft.errors.rawJson}</span>
+                  ) : null}
+                </div>
               )}
             </section>
           </div>

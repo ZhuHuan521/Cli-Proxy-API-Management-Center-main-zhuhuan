@@ -11,11 +11,13 @@ import { vertexApi, type VertexImportResponse } from '@/services/api/vertex';
 import { copyToClipboard } from '@/utils/clipboard';
 import { getErrorMessage, isRecord } from '@/utils/helpers';
 import { notifyAuthFilesChanged } from '@/features/authFiles/authFilesEvents';
-import { getPluginTitle, resolvePluginAssetURL } from '@/features/plugins/pluginResources';
 import { getKimiAffiliateUrl } from '@/features/providers/kimi';
-import type { PluginListEntry } from '@/types';
 import { createOAuthAttempts, type OAuthAttempt } from './oauthAttempts';
 import { validateDevinCallback } from './devinOAuth';
+import {
+  buildPluginOAuthProviderCards,
+  type PluginOAuthProviderCard,
+} from './oauthProviderCards';
 import styles from './OAuthPage.module.scss';
 import iconCodex from '@/assets/icons/codex.svg';
 import iconClaude from '@/assets/icons/claude.svg';
@@ -63,13 +65,6 @@ interface BuiltInOAuthProviderCard {
   id: BuiltInOAuthProvider;
   titleKey: string;
   icon: string | { light: string; dark: string };
-}
-
-interface PluginOAuthProviderCard {
-  kind: 'plugin';
-  id: string;
-  title: string;
-  icon: string;
 }
 
 type OAuthProviderCard = BuiltInOAuthProviderCard | PluginOAuthProviderCard;
@@ -156,33 +151,6 @@ function OAuthProviderIcon({
   }
   return <img src={getIcon(provider.icon, theme)} alt="" className={styles.cardTitleIcon} />;
 }
-
-const buildPluginOAuthProviderCards = (
-  plugins: PluginListEntry[],
-  apiBase: string
-): PluginOAuthProviderCard[] => {
-  const seenProviders = new Set(BUILTIN_PROVIDER_IDS);
-  return plugins.flatMap((plugin) => {
-    const provider = plugin.oauthProvider;
-    if (
-      !plugin.supportsOAuth ||
-      !plugin.effectiveEnabled ||
-      !provider ||
-      seenProviders.has(provider)
-    ) {
-      return [];
-    }
-    seenProviders.add(provider);
-    return [
-      {
-        kind: 'plugin' as const,
-        id: provider,
-        title: getPluginTitle(plugin),
-        icon: resolvePluginAssetURL(plugin.logo || plugin.metadata?.logo || '', apiBase),
-      },
-    ];
-  });
-};
 
 const isAbsoluteUrl = (value: string): boolean => {
   try {
@@ -302,7 +270,9 @@ export function OAuthPage() {
       try {
         const response = await pluginsApi.list();
         if (!cancelled) {
-          setPluginProviders(buildPluginOAuthProviderCards(response.plugins, apiBase));
+          setPluginProviders(
+            buildPluginOAuthProviderCards(response.plugins, apiBase, BUILTIN_PROVIDER_IDS)
+          );
         }
       } catch {
         if (!cancelled) {

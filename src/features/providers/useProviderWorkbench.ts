@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { providersApi } from '@/services/api';
-import { getErrorMessage } from '@/utils/helpers';
+import { pluginsApi, providersApi } from '@/services/api';
+import { getErrorMessage, isRecord } from '@/utils/helpers';
 import { useAuthStore, useConfigStore } from '@/stores';
 import {
   stripDisableAllModelsRule,
@@ -16,6 +16,7 @@ import type {
 } from '@/types';
 import {
   apiKeyFunToResource,
+  commandcodeToResource,
   claudeToResource,
   codexToResource,
   fennoAIToResource,
@@ -29,16 +30,21 @@ import {
 } from './adapters';
 import { PROVIDER_BRAND_ORDER } from './descriptors';
 import { buildThinkingFromLevels } from './thinkingLevels';
-import type {
-  ProviderBrand,
-  ProviderEntryFormInput,
-  ProviderGroup,
-  ProviderResource,
-  ProviderSnapshot,
-  SponsorKeyEntryInput,
-  SponsorProviderBrand,
-  SponsorProviderRaw,
+import {
+  readCommandCodeApiKey,
+  type CommandCodeAPIKeyEntry,
+  type ProviderBrand,
+  type CommandCodePluginConfig,
+  type ProviderEntryFormInput,
+  type ProviderGroup,
+  type ProviderResource,
+  type ProviderSnapshot,
+  type SponsorKeyEntryInput,
+  type SponsorProviderBrand,
+  type SponsorProviderRaw,
 } from './types';
+
+const COMMANDCODE_PLUGIN_ID = 'commandcode';
 import {
   buildApiKeyFunRaw,
   isApiKeyFunClaudeProvider,
@@ -88,6 +94,185 @@ const parseTextList = (text: string): string[] =>
     .split(/[\n,]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+
+export const readCommandCodeConfig = (config: Config | null): CommandCodePluginConfig | null => {
+  const raw = isRecord(config?.raw) ? config.raw : {};
+  const plugins = isRecord(raw.plugins) ? raw.plugins : {};
+  const configs = isRecord(plugins.configs) ? plugins.configs : {};
+  const value = configs[COMMANDCODE_PLUGIN_ID];
+  return isRecord(value) ? (value as CommandCodePluginConfig) : null;
+};
+
+const hasConfigValues = (
+  value: CommandCodePluginConfig | null | undefined
+): value is CommandCodePluginConfig => Boolean(value && Object.keys(value).length > 0);
+
+const resolveCommandCodeConfig = (
+  config: Config | null,
+  loaded: CommandCodePluginConfig | null | undefined
+): CommandCodePluginConfig | null =>
+  hasConfigValues(loaded) ? loaded : readCommandCodeConfig(config);
+
+const COMMANDCODE_CONTEXT_LENGTH_KEYS = [
+  'max_context_length',
+  'max-context-length',
+  'maxContextLength',
+] as const;
+
+const COMMANDCODE_TEST_MODEL_KEYS = ['test_model', 'test-model', 'testModel'] as const;
+
+const hasOwnRecordKey = (value: Record<string, unknown>, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+const firstExistingKey = <T extends string>(
+  value: Record<string, unknown>,
+  keys: readonly T[],
+  fallback: T
+): T => keys.find((key) => hasOwnRecordKey(value, key)) ?? fallback;
+
+export const buildCommandCodeConfig = (
+  input: ProviderEntryFormInput,
+  existing?: CommandCodePluginConfig | null
+): Record<string, unknown> => {
+  const next = { ...(existing ?? {}) } as Record<string, unknown>;
+  const hasOwn = (key: string): boolean => Object.prototype.hasOwnProperty.call(next, key);
+  const existingKeyPool = Array.isArray(existing?.api_keys) ? existing.api_keys : [];
+  const existingKeyEntriesByKey = new Map(
+    existingKeyPool
+      .filter((entry) => readCommandCodeApiKey(entry))
+      .map((entry) => [readCommandCodeApiKey(entry), entry] as const)
+  );
+
+  // The editor deliberately keeps saved secrets in `existingApiKey`; a blank
+  // password therefore means "keep this key", while removing a row means
+  // "remove it from the pool". The management PATCH endpoint treats null as a
+  // deletion marker, so use it for fields the user explicitly cleared.
+  if (input.apiKeyEntries !== undefined) {
+    // The form keeps one blank row as a visual placeholder. Treat that row as
+    // "unchanged" when an existing pool is present; removing a row explicitly
+    // produces an empty array and still clears the pool.
+    const hasEnteredKey = input.apiKeyEntries.some(
+      (entry) => entry.apiKey.trim() || entry.existingApiKey?.trim()
+    );
+    if (!hasEnteredKey && input.apiKeyEntries.length > 0 && existingKeyPool.length > 0) {
+      next.api_keys = existingKeyPool;
+    } else {
+      const keyPool = input.apiKeyEntries
+        .map((entry, index) => {
+          const oldEntryCandidate =
+            existingKeyEntriesByKey.get(entry.existingApiKey?.trim() || '') ??
+            existingKeyPool[index];
+          const oldEntry = isRecord(oldEntryCandidate)
+            ? (oldEntryCandidate as Record<string, unknown>)
+            : {};
+          const key =
+            entry.apiKey.trim() ||
+            entry.existingApiKey?.trim() ||
+            readCommandCodeApiKey(oldEntry as CommandCodeAPIKeyEntry);
+          if (!key) return null;
+          const nextEntry: Record<string, unknown> = { ...oldEntry, key };
+          // Normalize the legacy alias once the canonical `key` field is known.
+          delete nextEntry.api_key;
+          const proxyUrl = entry.proxyUrl.trim();
+          if (proxyUrl) nextEntry.proxy_url = proxyUrl;
+          else delete nextEntry.proxy_url;
+          if (entry.weight === undefined) delete nextEntry.weight;
+          else nextEntry.weight = entry.weight;
+          if (entry.disabled === true) nextEntry.disabled = true;
+          else delete nextEntry.disabled;
+          return nextEntry;
+        })
+        .filter((entry): entry is Record<string, unknown> => entry !== null);
+
+      if (keyPool.length) {
+        next.api_keys = keyPool;
+        next.api_key = null;
+      } else {
+        next.api_keys = null;
+        next.api_key = null;
+      }
+    }
+  } else if (input.apiKey.trim()) {
+    next.api_key = input.apiKey.trim();
+    next.api_keys = null;
+  }
+
+  const baseUrl = input.baseUrl.trim();
+  if (baseUrl) next.base_url = baseUrl;
+  else if (hasOwn('base_url')) next.base_url = null;
+
+  const proxyUrl = input.proxyUrl.trim();
+  if (proxyUrl) next.proxy_url = proxyUrl;
+  else if (hasOwn('proxy_url')) next.proxy_url = null;
+
+  const existingModels = Array.isArray(existing?.models) ? existing.models : [];
+  const existingModelsByName = new Map(
+    existingModels
+      .filter((model) => model && typeof model.name === 'string' && model.name.trim())
+      .map((model) => [model.name!.trim(), model] as const)
+  );
+  const models = (input.models ?? [])
+    .map((model, index) => {
+      const name = model.name.trim();
+      if (!name) return null;
+      const oldModelCandidate = existingModelsByName.get(name) ?? existingModels[index];
+      const oldModel = isRecord(oldModelCandidate)
+        ? (oldModelCandidate as Record<string, unknown>)
+        : {};
+      const nextModel: Record<string, unknown> = { ...oldModel, name };
+      const alias = model.alias?.trim();
+      if (alias) nextModel.alias = alias;
+      else delete nextModel.alias;
+
+      // CommandCode plugin configs historically used snake_case while some
+      // host-shaped hand-written configs use kebab/camel case. Preserve an
+      // existing spelling and use the plugin-native spelling for new rows.
+      const contextLengthKey = firstExistingKey(
+        oldModel,
+        COMMANDCODE_CONTEXT_LENGTH_KEYS,
+        'max_context_length'
+      );
+      if (model.maxContextLength !== undefined) {
+        nextModel[contextLengthKey] = model.maxContextLength;
+      } else {
+        COMMANDCODE_CONTEXT_LENGTH_KEYS.forEach((key) => delete nextModel[key]);
+      }
+
+      if (model.thinkingLevelsTouched) {
+        const thinking = buildThinkingFromLevels(model.thinkingLevels);
+        if (thinking) nextModel.thinking = thinking;
+        else delete nextModel.thinking;
+      } else if ((model.thinkingJson ?? '').trim()) {
+        nextModel.thinking = parseThinkingJson(model.thinkingJson);
+      } else {
+        delete nextModel.thinking;
+      }
+
+      if (model.priority !== undefined) nextModel.priority = model.priority;
+      else delete nextModel.priority;
+
+      const testModelKey = firstExistingKey(oldModel, COMMANDCODE_TEST_MODEL_KEYS, 'test_model');
+      if (model.testModel?.trim()) nextModel[testModelKey] = model.testModel.trim();
+      else COMMANDCODE_TEST_MODEL_KEYS.forEach((key) => delete nextModel[key]);
+      return nextModel;
+    })
+    .filter((model): model is Record<string, unknown> => model !== null);
+  if (models.length) next.models = models;
+  else if (hasOwn('models')) next.models = null;
+
+  next.enabled = !input.disabled;
+  if (input.sharedScheduling === undefined) {
+    if (hasOwn('shared_scheduling')) next.shared_scheduling = null;
+  } else {
+    next.shared_scheduling = input.sharedScheduling;
+  }
+  if (input.priority === undefined) {
+    if (hasOwn('priority')) next.priority = null;
+  } else {
+    next.priority = input.priority;
+  }
+  return next;
+};
 
 const headersFromEntries = (
   entries: Array<{ key: string; value: string }>
@@ -363,7 +548,10 @@ const toggleSponsorConfig = async (raw: SponsorProviderRaw, disabled: boolean) =
   }
 };
 
-export const buildProviderGroups = (config: Config): ProviderGroup[] =>
+export const buildProviderGroups = (
+  config: Config,
+  loadedCommandCodeConfig?: CommandCodePluginConfig | null
+): ProviderGroup[] =>
   PROVIDER_BRAND_ORDER.reduce<ProviderGroup[]>((groups, brand) => {
     let resources: ProviderResource[];
     switch (brand) {
@@ -429,6 +617,11 @@ export const buildProviderGroups = (config: Config): ProviderGroup[] =>
           []
         );
         break;
+      case 'commandcode': {
+        const commandCodeConfig = resolveCommandCodeConfig(config, loadedCommandCodeConfig);
+        resources = commandCodeConfig ? [commandcodeToResource(commandCodeConfig, 0)] : [];
+        break;
+      }
       case 'apikeyFun': {
         const sponsorResource = apiKeyFunToResource(buildApiKeyFunRaw(config));
         resources = sponsorResource ? [sponsorResource] : [];
@@ -475,6 +668,9 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [mutating, setMutating] = useState<boolean>(false);
   const [fetchedAt, setFetchedAt] = useState<string>(() => new Date().toISOString());
+  // Plugin config is intentionally loaded through /plugins/:id/config. The
+  // generic /config response only exposes host-owned enabled/priority fields.
+  const [commandCodeConfig, setCommandCodeConfig] = useState<CommandCodePluginConfig | null>(null);
 
   const hasFetchedRef = useRef(false);
 
@@ -484,11 +680,13 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
     setIsFetching(true);
     setErrorMessage(null);
     try {
-      const [configResult, vertexResult, openaiResult] = await Promise.allSettled([
-        fetchConfig(true),
-        providersApi.getVertexConfigs(),
-        providersApi.getOpenAIProviders(),
-      ]);
+      const [configResult, vertexResult, openaiResult, commandCodeResult] =
+        await Promise.allSettled([
+          fetchConfig(true),
+          providersApi.getVertexConfigs(),
+          providersApi.getOpenAIProviders(),
+          pluginsApi.getConfig(COMMANDCODE_PLUGIN_ID),
+        ]);
       if (configResult.status !== 'fulfilled') {
         throw configResult.reason;
       }
@@ -497,6 +695,18 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
       }
       if (openaiResult.status === 'fulfilled') {
         updateConfigValue('openai-compatibility', openaiResult.value || []);
+      }
+      if (commandCodeResult.status === 'fulfilled') {
+        setCommandCodeConfig(
+          isRecord(commandCodeResult.value)
+            ? (commandCodeResult.value as CommandCodePluginConfig)
+            : null
+        );
+      } else {
+        // A backend without plugin management support should not prevent the
+        // built-in provider page from loading. Keep only the host metadata
+        // fallback in that case.
+        setCommandCodeConfig(null);
       }
       setFetchedAt(new Date().toISOString());
     } catch (err) {
@@ -512,8 +722,12 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
   }, []);
 
   useEffect(() => {
+    if (!connected) {
+      hasFetchedRef.current = false;
+      setCommandCodeConfig(null);
+      return;
+    }
     if (hasFetchedRef.current) return;
-    if (!connected) return;
     hasFetchedRef.current = true;
     refetch().catch(() => {});
   }, [connected, refetch]);
@@ -524,9 +738,9 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
     if (!config) return null;
     return {
       fetchedAt,
-      groups: buildProviderGroups(config),
+      groups: buildProviderGroups(config, commandCodeConfig),
     };
-  }, [config, fetchedAt]);
+  }, [commandCodeConfig, config, fetchedAt]);
 
   /* ------------------- mutations ------------------- */
 
@@ -667,6 +881,8 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
           );
         } else if (brand === 'openaiCompatibility') {
           await providersApi.createOpenAIProvider(buildOpenAIConfig(input));
+        } else if (brand === 'commandcode') {
+          await pluginsApi.patchConfig(COMMANDCODE_PLUGIN_ID, buildCommandCodeConfig(input));
         } else if (
           brand === 'apikeyFun' ||
           brand === 'fennoAI' ||
@@ -737,6 +953,11 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
             selector.index,
             buildOpenAIConfig(input, resource.raw as OpenAIProviderConfig)
           );
+        } else if (brand === 'commandcode' && selector.brand === 'commandcode') {
+          await pluginsApi.patchConfig(
+            COMMANDCODE_PLUGIN_ID,
+            buildCommandCodeConfig(input, resource.raw as CommandCodePluginConfig)
+          );
         } else if (
           brand === 'apikeyFun' ||
           brand === 'fennoAI' ||
@@ -788,6 +1009,8 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
             (item, index) => (item.sourceIndex ?? index) !== sel.index
           );
           updateConfigValue('openai-compatibility', next);
+        } else if (sel.brand === 'commandcode') {
+          await pluginsApi.patchConfig(COMMANDCODE_PLUGIN_ID, { enabled: false });
         } else if (
           sel.brand === 'apikeyFun' ||
           sel.brand === 'fennoAI' ||
@@ -867,6 +1090,8 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
           }
         } else if (brand === 'openaiCompatibility' && selector.brand === 'openaiCompatibility') {
           await providersApi.updateOpenAIProviderDisabled(selector.index, disabled);
+        } else if (brand === 'commandcode' && selector.brand === 'commandcode') {
+          await pluginsApi.patchConfig(COMMANDCODE_PLUGIN_ID, { enabled: !disabled });
         } else if (
           brand === 'apikeyFun' ||
           brand === 'fennoAI' ||

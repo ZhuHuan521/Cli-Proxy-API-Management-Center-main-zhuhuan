@@ -8,6 +8,8 @@ export interface PluginConfigDraft {
   priority: string;
   values: Record<string, PluginDraftValue>;
   errors: Record<string, string>;
+  rawJson: string;
+  rawJsonTouched: boolean;
   enabledTouched: boolean;
   priorityTouched: boolean;
   touchedFields: Record<string, boolean>;
@@ -46,6 +48,9 @@ export function buildPluginConfigDraft(
       ? String(currentConfig.priority)
       : '0';
   const values: PluginConfigDraft['values'] = {};
+  const rawEntries: Record<string, unknown> = { ...currentConfig };
+  delete rawEntries.enabled;
+  delete rawEntries.priority;
 
   plugin.configFields.forEach((field) => {
     values[field.name] = getFieldDraftValue(field, currentConfig[field.name]);
@@ -56,6 +61,8 @@ export function buildPluginConfigDraft(
     priority,
     values,
     errors: {},
+    rawJson: stringifyJSONValue(rawEntries),
+    rawJsonTouched: false,
     enabledTouched: false,
     priorityTouched: false,
     touchedFields: {},
@@ -160,6 +167,27 @@ export function buildPluginConfigPatch(
 
     patch[field.name] = text;
   });
+
+  if (draft.rawJsonTouched) {
+    const trimmed = draft.rawJson.trim();
+    if (!trimmed) {
+      errors.rawJson = '';
+    } else {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (!isRecord(parsed)) {
+          errors.rawJson = t('plugin_management.expected_object');
+        } else {
+          for (const [key, value] of Object.entries(parsed)) {
+            if (key === 'enabled' || key === 'priority') continue;
+            patch[key] = value;
+          }
+        }
+      } catch {
+        errors.rawJson = t('plugin_management.invalid_json');
+      }
+    }
+  }
 
   return { patch, errors };
 }

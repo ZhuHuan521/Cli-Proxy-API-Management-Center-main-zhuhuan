@@ -24,11 +24,13 @@ import { PROVIDER_DESCRIPTORS } from '../../descriptors';
 import { readThinkingLevels } from '../../thinkingLevels';
 import type {
   ApiKeyEntryInput,
+  CommandCodePluginConfig,
   ModelEntryInput,
   ProviderBrand,
   ProviderEntryFormInput,
   ProviderResource,
 } from '../../types';
+import { readCommandCodeApiKey } from '../../types';
 import { useConnectivityTest, type ConnectivityErrorMessages } from './useConnectivityTest';
 import { useModelDiscovery } from './useModelDiscovery';
 import { ModelDiscoveryPanel } from './ModelDiscoveryPanel';
@@ -59,6 +61,7 @@ const emptyApiKeyEntry = (): ApiKeyEntryInput => ({
   weight: undefined,
 });
 const XAI_API_BASE_URL = 'https://api.x.ai/v1';
+const COMMANDCODE_DEFAULT_BASE_URL = 'https://api.commandcode.ai';
 
 const stripDisableAllRule = (list?: string[]): string[] =>
   (list ?? []).filter((s) => s.trim() !== '*');
@@ -70,11 +73,82 @@ const formatJsonObject = (value?: Record<string, unknown>): string => {
 
 const isClaudeLikeBrand = (brand: ProviderBrand): boolean => brand === 'claude';
 
+type CommandCodeModel = NonNullable<CommandCodePluginConfig['models']>[number];
+
+const readCommandCodeModelContextLength = (model: CommandCodeModel) => {
+  const raw = model.max_context_length ?? model['max-context-length'] ?? model.maxContextLength;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+};
+
+const readCommandCodeModelThinking = (
+  model: CommandCodeModel
+): Record<string, unknown> | undefined => {
+  const value = model.thinking;
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+};
+
 function buildInitialForm(
   brand: ProviderBrand,
   resource: ProviderResource | null,
   mode: 'create' | 'edit'
 ): ProviderEntryFormInput {
+  if (brand === 'commandcode') {
+    const cfg = mode === 'create' || !resource ? {} : (resource.raw as CommandCodePluginConfig);
+    const configuredKeyEntries = Array.isArray(cfg.api_keys)
+      ? cfg.api_keys.map((entry) => ({
+          apiKey: '',
+          existingApiKey: readCommandCodeApiKey(entry),
+          proxyUrl: entry.proxy_url?.trim() || '',
+          weight: entry.weight,
+          disabled: entry.disabled === true,
+        }))
+      : cfg.api_key?.trim()
+        ? [
+            {
+              apiKey: '',
+              existingApiKey: cfg.api_key.trim(),
+              proxyUrl: '',
+              weight: undefined,
+              disabled: false,
+            },
+          ]
+        : [];
+    return {
+      apiKey: '',
+      name: '',
+      baseUrl: cfg.base_url?.trim() || COMMANDCODE_DEFAULT_BASE_URL,
+      proxyUrl: cfg.proxy_url?.trim() || '',
+      prefix: '',
+      disabled: mode === 'create' ? false : cfg.enabled !== true,
+      sharedScheduling: cfg.shared_scheduling !== false,
+      disableCooling: false,
+      priority: cfg.priority,
+      weight: undefined,
+      models: cfg.models?.length
+        ? cfg.models.map((model) => ({
+            name: model.name?.trim() || model.alias?.trim() || '',
+            alias: model.alias?.trim() || '',
+            priority: model.priority,
+            testModel: model.test_model,
+            maxContextLength: readCommandCodeModelContextLength(model),
+            thinkingJson: formatJsonObject(readCommandCodeModelThinking(model)),
+            thinkingLevels: readThinkingLevels(readCommandCodeModelThinking(model)),
+          }))
+        : [emptyModel()],
+      headers: [emptyHeader()],
+      excludedModelsText: '',
+      websockets: undefined,
+      alphaSearch: undefined,
+      cloak: undefined,
+      fingerprintProfile: undefined,
+      testModel: undefined,
+      apiKeyEntries: configuredKeyEntries.length ? configuredKeyEntries : [emptyApiKeyEntry()],
+    };
+  }
   if (mode === 'create' || !resource) {
     return {
       apiKey: '',
@@ -239,6 +313,10 @@ export function BaseProviderForm({
   const fallbackApiKey = useMemo(() => {
     if (mode !== 'edit' || !resource) return '';
     if (brand === 'openaiCompatibility') return '';
+    if (brand === 'commandcode') {
+      const raw = resource.raw as CommandCodePluginConfig;
+      return raw.api_key?.trim() || raw.api_keys?.map(readCommandCodeApiKey).find(Boolean) || '';
+    }
     return (resource.raw as { apiKey?: string } | undefined)?.apiKey ?? '';
   }, [brand, mode, resource]);
 
@@ -246,6 +324,11 @@ export function BaseProviderForm({
     if (mode !== 'edit' || !resource) return '';
     return (resource.raw as { authIndex?: string } | undefined)?.authIndex ?? '';
   }, [mode, resource]);
+
+  const commandCodeProtocolVersion = useMemo(() => {
+    if (brand !== 'commandcode' || !resource) return undefined;
+    return (resource.raw as CommandCodePluginConfig).protocol_version?.trim() || undefined;
+  }, [brand, resource]);
 
   const connectivityMessages = useMemo<ConnectivityErrorMessages>(
     () => ({
@@ -282,6 +365,7 @@ export function BaseProviderForm({
     apiKey: form.apiKey,
     fallbackApiKey,
     authIndex: fallbackAuthIndex,
+    protocolVersion: commandCodeProtocolVersion,
   });
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
 
@@ -392,23 +476,41 @@ export function BaseProviderForm({
     if (descriptor.supportsName && !form.name.trim()) {
       return t('providersPage.form.validation.nameRequired');
     }
-    if (descriptor.supportsApiKey && mode === 'create' && !form.apiKey.trim()) {
+    const hasCommandCodeKey = (form.apiKeyEntries ?? []).some(
+      (entry) => entry.apiKey.trim() || entry.existingApiKey?.trim()
+    );
+    if (brand === 'commandcode' && !form.disabled && !hasCommandCodeKey) {
+      return t('providersPage.form.validation.apiKeyRequired');
+    }
+    if (
+      descriptor.supportsApiKey &&
+      brand !== 'commandcode' &&
+      mode === 'create' &&
+      !form.apiKey.trim()
+    ) {
       return t('providersPage.form.validation.apiKeyRequired');
     }
     if (descriptor.baseUrlRequired && !form.baseUrl.trim()) {
       return t('providersPage.form.validation.baseUrlRequired');
     }
     const weights = [
-      ...(brand === 'openaiCompatibility'
+      ...(brand === 'openaiCompatibility' || brand === 'commandcode'
         ? (form.apiKeyEntries ?? []).map((entry) => entry.weight)
         : []),
-      ...(brand !== 'openaiCompatibility' ? [form.weight] : []),
+      ...(brand !== 'openaiCompatibility' && brand !== 'commandcode' ? [form.weight] : []),
     ];
     if (weights.some((weight) => weight !== undefined && !Number.isSafeInteger(weight))) {
       return t('providersPage.form.validation.weightInteger');
     }
     if (weights.some((weight) => weight !== undefined && weight > MAX_CREDENTIAL_WEIGHT)) {
       return t('providersPage.form.validation.weightMax', { max: MAX_CREDENTIAL_WEIGHT });
+    }
+    if (
+      brand === 'commandcode' &&
+      form.priority !== undefined &&
+      !Number.isSafeInteger(form.priority)
+    ) {
+      return t('plugin_management.invalid_priority');
     }
     return null;
   };
@@ -510,6 +612,9 @@ export function BaseProviderForm({
 
   return (
     <form id={formId} className={styles.form} onSubmit={handleSubmit} noValidate>
+      {brand === 'commandcode' ? (
+        <p className={styles.sectionDesc}>{t('providersPage.form.commandCodeRoutingHint')}</p>
+      ) : null}
       {/* 基础字段 */}
       <div className={styles.section}>
         {descriptor.supportsName ? (
@@ -527,7 +632,7 @@ export function BaseProviderForm({
           </div>
         ) : null}
 
-        {descriptor.supportsApiKey ? (
+        {descriptor.supportsApiKey && brand !== 'commandcode' ? (
           <div className={styles.field}>
             <label className={styles.label} htmlFor={`${fid}-apiKey`}>
               {t('providersPage.form.apiKey')}
@@ -610,20 +715,22 @@ export function BaseProviderForm({
           </div>
         ) : null}
 
-        {descriptor.supportsPrefix ? (
+        {descriptor.supportsPrefix || descriptor.supportsPriority ? (
           <div className={styles.fieldRow}>
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor={`${fid}-prefix`}>
-                {t('providersPage.form.prefix')}
-              </label>
-              <input
-                id={`${fid}-prefix`}
-                className={styles.input}
-                value={form.prefix}
-                onChange={(e) => updateField('prefix', e.target.value)}
-                disabled={mutating}
-              />
-            </div>
+            {descriptor.supportsPrefix ? (
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor={`${fid}-prefix`}>
+                  {t('providersPage.form.prefix')}
+                </label>
+                <input
+                  id={`${fid}-prefix`}
+                  className={styles.input}
+                  value={form.prefix}
+                  onChange={(e) => updateField('prefix', e.target.value)}
+                  disabled={mutating}
+                />
+              </div>
+            ) : null}
             {descriptor.supportsPriority ? (
               <div className={styles.field}>
                 <label className={styles.label} htmlFor={`${fid}-prio`}>
@@ -647,7 +754,7 @@ export function BaseProviderForm({
           </div>
         ) : null}
 
-        {brand !== 'openaiCompatibility' ? (
+        {brand !== 'openaiCompatibility' && brand !== 'commandcode' ? (
           <div className={styles.field}>
             <label className={styles.label} htmlFor={`${fid}-weight`}>
               {t('providersPage.form.weight')}
@@ -768,6 +875,22 @@ export function BaseProviderForm({
           </label>
         ) : null}
 
+        {brand === 'commandcode' ? (
+          <label className={styles.checkboxRow}>
+            <input
+              type="checkbox"
+              className={styles.checkboxBox}
+              checked={form.sharedScheduling !== false}
+              disabled={mutating}
+              onChange={(e) => updateField('sharedScheduling', e.target.checked)}
+            />
+            <span className={styles.checkboxText}>
+              <span>{t('providersPage.form.commandCodeSharedScheduling')}</span>
+              <small>{t('providersPage.form.commandCodeSharedSchedulingHint')}</small>
+            </span>
+          </label>
+        ) : null}
+
         {supportsDisableCooling ? (
           <label className={styles.checkboxRow}>
             <input
@@ -788,7 +911,11 @@ export function BaseProviderForm({
       {/* 高级折叠区 */}
       {descriptor.supportsApiKeyEntries && form.apiKeyEntries ? (
         <Collapsible
-          label={t('providersPage.form.apiKeyEntriesSection')}
+          label={
+            brand === 'commandcode'
+              ? t('providersPage.form.commandCodeApiKeyEntriesSection')
+              : t('providersPage.form.apiKeyEntriesSection')
+          }
           hint={`${
             apiKeyEntries.filter((e) => e.apiKey.trim() || e.existingApiKey?.trim()).length
           }`}
@@ -800,6 +927,8 @@ export function BaseProviderForm({
             mutating={mutating}
             statuses={connectivity.openaiStatuses}
             isTestingAny={connectivity.isTestingAny}
+            showConnectivity={brand !== 'commandcode'}
+            showEntryDisabled={brand === 'commandcode'}
             onUpdate={(idx, patch) =>
               updateField(
                 'apiKeyEntries',

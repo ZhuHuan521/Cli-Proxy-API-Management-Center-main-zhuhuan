@@ -25,13 +25,17 @@ import {
   getKimiProtocolUrls,
   resolveKimiBaseUrl,
 } from './kimi';
+import { readCommandCodeApiKey } from './types';
 import type {
+  CommandCodePluginConfig,
   ProviderBrand,
   ProviderResource,
   ProviderResourceSelector,
   SponsorProviderBrand,
   SponsorProviderRaw,
 } from './types';
+
+const COMMANDCODE_DEFAULT_BASE_URL = 'https://api.commandcode.ai';
 
 const countHeaders = (headers?: Record<string, string>): number =>
   headers ? Object.keys(headers).length : 0;
@@ -129,6 +133,40 @@ export function claudeToResource(config: ProviderKeyConfig, index: number): Prov
 
 export function vertexToResource(config: ProviderKeyConfig, index: number): ProviderResource {
   return providerKeyToResource('vertex', config, index);
+}
+
+export function commandcodeToResource(raw: CommandCodePluginConfig, index: number): ProviderResource {
+  const firstKey =
+    raw.api_keys?.map(readCommandCodeApiKey).find(Boolean) ?? raw.api_key?.trim() ?? '';
+  const modelNames = new Set<string>();
+  (raw.models ?? []).forEach((model) => {
+    const name = model.name?.trim() || model.alias?.trim() || model.display_name?.trim();
+    if (name) modelNames.add(name);
+  });
+  return {
+    id: buildId('commandcode', index, 'provider'),
+    brand: 'commandcode',
+    originalIndex: index,
+    name: 'CommandCode Provider',
+    identifier: firstKey ? maskApiKey(firstKey) : 'Plugin',
+    apiKeyPreview: firstKey ? maskApiKey(firstKey) : null,
+    apiKey: firstKey || null,
+    authIndex: null,
+    baseUrl: raw.base_url?.trim() || COMMANDCODE_DEFAULT_BASE_URL,
+    proxyUrl: raw.api_keys?.[0]?.proxy_url?.trim() || raw.proxy_url?.trim() || null,
+    prefix: null,
+    modelCount: modelNames.size,
+    models: Array.from(modelNames),
+    priority: normalizePriority(raw.priority),
+    headerCount: 0,
+    excludedModelCount: 0,
+    apiKeyEntryCount: raw.api_keys?.length ?? (raw.api_key?.trim() ? 1 : 0),
+    // Plugin host defaults an omitted `enabled` field to false.
+    disabled: raw.enabled !== true,
+    flags: { sharedScheduling: raw.shared_scheduling !== false },
+    selector: { brand: 'commandcode', index },
+    raw,
+  };
 }
 
 export function openaiToResource(config: OpenAIProviderConfig, index: number): ProviderResource {

@@ -128,7 +128,7 @@ function buildInitialForm(
       prefix: '',
       disabled: mode === 'create' ? false : cfg.enabled !== true,
       sharedScheduling: cfg.shared_scheduling !== false,
-      disableCooling: false,
+      disableCooling: cfg.disable_cooling === true,
       priority: cfg.priority,
       weight: undefined,
       models: cfg.models?.length
@@ -581,7 +581,7 @@ export function BaseProviderForm({
     brand === 'codex' ||
     brand === 'xai' ||
     isClaudeLikeBrand(brand) ||
-    brand === 'openaiCompatibility';
+    brand === 'openaiCompatibility' || brand === 'commandcode';
   const supportsModelImage = brand === 'openaiCompatibility';
   const singleConnectivity =
     brand === 'codex' || brand === 'xai'

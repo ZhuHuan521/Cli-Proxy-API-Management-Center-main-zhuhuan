@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { apiClient } from '../src/services/api/client';
 import { providersApi } from '../src/services/api/providers';
 import { normalizeModelAliases, normalizeProviderKeyConfig } from '../src/services/api/transformers';
+import { modelAliasToFormEntry } from '../src/features/providers/modelAliasForm';
 
 const originalGet = apiClient.get;
 const originalPut = apiClient.put;
@@ -12,6 +13,20 @@ afterEach(() => {
 });
 
 describe('provider model capabilities', () => {
+  test('keeps max context and modalities when opening the model editor', () => {
+    expect(
+      modelAliasToFormEntry({
+        name: 'kimi-k2',
+        maxContextLength: 1048576,
+        inputModalities: ['text', 'image'],
+      })
+    ).toMatchObject({
+      name: 'kimi-k2',
+      maxContextLength: 1048576,
+      inputModalities: ['text', 'image'],
+    });
+  });
+
   test('normalizes max-context-length and input-modalities', () => {
     const models = normalizeModelAliases([
       {

@@ -182,6 +182,38 @@ describe('CommandCode provider management', () => {
     expect(patch.api_key).toBeNull();
   });
 
+  test('edits and preserves per-key scheduler priority', () => {
+    const patch = buildCommandCodeConfig(
+      {
+        apiKey: '',
+        name: '',
+        baseUrl: '',
+        proxyUrl: '',
+        prefix: '',
+        disabled: false,
+        models: [],
+        headers: [],
+        excludedModelsText: '',
+        apiKeyEntries: [
+          {
+            apiKey: 'user-key',
+            existingApiKey: 'user-key',
+            proxyUrl: '',
+            weight: 2,
+            priority: 17,
+          },
+        ],
+      },
+      {
+        api_keys: [{ key: 'user-key', weight: 2, priority: 5, custom_route: 'keep-me' }],
+      }
+    );
+
+    expect(patch.api_keys).toEqual([
+      { key: 'user-key', weight: 2, priority: 17, custom_route: 'keep-me' },
+    ]);
+  });
+
   test('serializes custom model context and thinking capabilities', () => {
     const patch = buildCommandCodeConfig(
       {
@@ -221,6 +253,58 @@ describe('CommandCode provider management', () => {
         },
       },
     ]);
+  });
+
+  test('writes an explicit disable_cooling opt-in and clears it when unchecked', () => {
+    const baseInput = {
+      apiKey: '',
+      name: '',
+      baseUrl: 'https://api.commandcode.ai',
+      proxyUrl: '',
+      prefix: '',
+      disabled: false,
+      models: [],
+      headers: [],
+      excludedModelsText: '',
+      apiKeyEntries: [{ apiKey: 'user-test-key', proxyUrl: '', weight: undefined }],
+    };
+
+    const enabled = buildCommandCodeConfig(
+      { ...baseInput, disableCooling: true },
+      { enabled: true }
+    );
+    expect(enabled.disable_cooling).toBe(true);
+
+    // Unchecked means "inherit host policy": drop the key instead of forcing
+    // cooling back on for credentials the operator disabled it for.
+    const cleared = buildCommandCodeConfig(
+      { ...baseInput, disableCooling: false },
+      { enabled: true, disable_cooling: true }
+    );
+    expect(cleared.disable_cooling).toBeNull();
+  });
+
+  test('keeps a hand-written per-key disable_cooling override intact', () => {
+    const patch = buildCommandCodeConfig(
+      {
+        apiKey: '',
+        name: '',
+        baseUrl: 'https://api.commandcode.ai',
+        proxyUrl: '',
+        prefix: '',
+        disabled: false,
+        models: [],
+        headers: [],
+        excludedModelsText: '',
+        apiKeyEntries: [{ apiKey: 'user-test-key', proxyUrl: '', weight: undefined }],
+      },
+      {
+        enabled: true,
+        api_keys: [{ key: 'user-test-key', disable_cooling: true }],
+      }
+    );
+
+    expect(patch.api_keys).toEqual([{ key: 'user-test-key', disable_cooling: true }]);
   });
 
   test('retains an existing kebab-case context key while editing a CommandCode model', () => {

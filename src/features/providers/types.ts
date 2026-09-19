@@ -166,8 +166,11 @@ export interface ApiKeyEntryInput {
   existingApiKey?: string;
   proxyUrl: string;
   weight?: number;
+  priority?: number;
   authIndex?: string;
   disabled?: boolean;
+  /** Optional per-key cooldown override forwarded to plugin configs. */
+  disableCooling?: boolean;
 }
 
 export interface CommandCodeModelEntry {
@@ -188,8 +191,10 @@ export interface CommandCodeAPIKeyEntry {
   /** Legacy/plugin-auth spelling accepted when reading an existing pool. */
   api_key?: string;
   weight?: number;
+  priority?: number;
   proxy_url?: string;
   disabled?: boolean;
+  disable_cooling?: boolean;
   [key: string]: unknown;
 }
 
@@ -205,6 +210,7 @@ export interface CommandCodePluginConfig {
   enabled?: boolean;
   priority?: number;
   shared_scheduling?: boolean;
+  disable_cooling?: boolean;
   models?: CommandCodeModelEntry[];
   api_key?: string;
   api_keys?: CommandCodeAPIKeyEntry[];

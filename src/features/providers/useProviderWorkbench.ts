@@ -178,8 +178,15 @@ export const buildCommandCodeConfig = (
           else delete nextEntry.proxy_url;
           if (entry.weight === undefined) delete nextEntry.weight;
           else nextEntry.weight = entry.weight;
+          if (entry.priority === undefined) delete nextEntry.priority;
+          else nextEntry.priority = entry.priority;
           if (entry.disabled === true) nextEntry.disabled = true;
           else delete nextEntry.disabled;
+          // Per-key cooldown override is optional; leave hand-written values
+          // alone when the editor does not expose the field.
+          if (entry.disableCooling !== undefined) {
+            nextEntry.disable_cooling = entry.disableCooling;
+          }
           return nextEntry;
         })
         .filter((entry): entry is Record<string, unknown> => entry !== null);
@@ -265,6 +272,12 @@ export const buildCommandCodeConfig = (
     if (hasOwn('shared_scheduling')) next.shared_scheduling = null;
   } else {
     next.shared_scheduling = input.sharedScheduling;
+  }
+  if (input.disableCooling === true) {
+    next.disable_cooling = true;
+  } else if (hasOwn('disable_cooling')) {
+    // Unchecked means "inherit host policy", not "force cooling on".
+    next.disable_cooling = null;
   }
   if (input.priority === undefined) {
     if (hasOwn('priority')) next.priority = null;

@@ -13,32 +13,32 @@ import { QuotaResetLabel } from '../../components/QuotaResetLabel';
 import { XAI_WEEKLY_ROW_ID, collectQuotaRowInstants, pickUrgentRowId } from '../../resetSchedule';
 import type { QuotaBodyProps } from '../../types';
 
-const formatUsdFromCents = (cents: number | null): string => {
+const formatUsdFromCents = (cents: number | null, locale?: string): string => {
   if (cents === null) return '--';
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency: 'USD',
   }).format(cents / 100);
 };
 
-const formatXaiRemainingAmount = (billing: XaiBillingSummary): string => {
+const formatXaiRemainingAmount = (billing: XaiBillingSummary, locale?: string): string => {
   const remainingCents =
     billing.monthlyLimitCents !== null && billing.includedUsedCents !== null
       ? Math.max(0, billing.monthlyLimitCents - billing.includedUsedCents)
       : null;
-  const remaining = formatUsdFromCents(remainingCents);
-  const limit = formatUsdFromCents(billing.monthlyLimitCents);
+  const remaining = formatUsdFromCents(remainingCents, locale);
+  const limit = formatUsdFromCents(billing.monthlyLimitCents, locale);
   if (billing.monthlyLimitCents === null) return remaining;
   return `${remaining} / ${limit}`;
 };
 
-const formatXaiOnDemandAmount = (billing: XaiBillingSummary): string => {
+const formatXaiOnDemandAmount = (billing: XaiBillingSummary, locale?: string): string => {
   const remainingCents =
     billing.onDemandCapCents !== null && billing.onDemandUsedCents !== null
       ? Math.max(0, billing.onDemandCapCents - billing.onDemandUsedCents)
       : null;
-  const remaining = formatUsdFromCents(remainingCents);
-  const cap = formatUsdFromCents(billing.onDemandCapCents);
+  const remaining = formatUsdFromCents(remainingCents, locale);
+  const cap = formatUsdFromCents(billing.onDemandCapCents, locale);
   if (billing.onDemandCapCents === null) return remaining;
   return `${remaining} / ${cap}`;
 };
@@ -50,6 +50,15 @@ const formatXaiPercent = (value: number | null): string => {
 
 const XAI_SUPERGROK_LIMIT_CENTS = 15_000;
 const XAI_SUPERGROK_HEAVY_LIMIT_CENTS = 150_000;
+
+const planValueClass = (
+  tier: XaiBillingSummary['planTier'],
+  classes: QuotaBodyProps<XaiQuotaState>['classes']
+) => {
+  if (tier === 'elite') return classes.elitePlanValue;
+  if (tier === 'premium') return classes.premiumPlanValue;
+  return classes.codexPlanValue;
+};
 
 const resolveXaiPlan = (
   monthlyLimitCents: number | null
@@ -85,7 +94,15 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>) 
       <>
         <div className={classes.codexPlan}>
           <span className={classes.codexPlanLabel}>{t('xai_quota.plan_label')}</span>
-          <span className={classes.premiumPlanValue}>{t('xai_quota.plan_paid')}</span>
+          <span
+            className={
+              billing.planLabel
+                ? planValueClass(billing.planTier, classes)
+                : classes.premiumPlanValue
+            }
+          >
+            {billing.planLabel ?? t('xai_quota.plan_paid')}
+          </span>
         </div>
         <div className={classes.quotaMessage}>{t('xai_quota.paid_health')}</div>
       </>
@@ -96,7 +113,7 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>) 
     billing.usedPercent === null ? null : Math.max(0, Math.min(100, billing.usedPercent));
   const remaining = clampedUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedUsed));
   const percentLabel = formatXaiPercent(remaining);
-  const amountLabel = formatXaiRemainingAmount(billing);
+  const amountLabel = formatXaiRemainingAmount(billing, locale);
   const resetLabel = formatQuotaResetTime(billing.billingPeriodEnd);
   // The monthly row is a billing cycle, so it carries no resetAtMs (that field
   // is derived from periodEnd, the weekly quota window). Parse for the
@@ -115,7 +132,7 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>) 
   const onDemandRemaining =
     clampedOnDemandUsed === null ? null : Math.max(0, Math.min(100, 100 - clampedOnDemandUsed));
   const onDemandPercentLabel = formatXaiPercent(onDemandRemaining);
-  const onDemandAmountLabel = formatXaiOnDemandAmount(billing);
+  const onDemandAmountLabel = formatXaiOnDemandAmount(billing, locale);
   const plan = resolveXaiPlan(billing.monthlyLimitCents);
   const weeklyUsed =
     billing.periodType === 'weekly' && billing.usagePercent !== null
@@ -138,13 +155,45 @@ export function XaiQuotaBody({ quota, classes }: QuotaBodyProps<XaiQuotaState>) 
       Boolean(billing.billingPeriodEnd)) &&
     !(hasWeeklyData && billing.monthlyLimitCents === 0 && billing.usedCents === 0);
 
+  const subscriptionLabel = billing.planLabel ?? (plan ? t(`xai_quota.${plan.labelKey}`) : null);
+  const subscriptionClass = billing.planLabel
+    ? planValueClass(billing.planTier, classes)
+    : plan?.premium
+      ? classes.premiumPlanValue
+      : classes.codexPlanValue;
+  const headerReset = buildResetDisplay(
+    null,
+    hasWeeklyData ? billing.resetAtMs : parseIsoToMs(billing.billingPeriodEnd),
+    now,
+    locale
+  );
+
   return (
     <>
-      {plan && (
+      {(subscriptionLabel || headerReset) && (
         <div className={classes.codexPlan}>
-          <span className={classes.codexPlanLabel}>{t('xai_quota.plan_label')}</span>
-          <span className={plan.premium ? classes.premiumPlanValue : classes.codexPlanValue}>
-            {t(`xai_quota.${plan.labelKey}`)}
+          {subscriptionLabel && (
+            <span className={classes.codexPlanItem}>
+              <span className={classes.codexPlanLabel}>{t('xai_quota.plan_label')}</span>
+              <span className={subscriptionClass}>{subscriptionLabel}</span>
+            </span>
+          )}
+          {headerReset && (
+            <span className={classes.codexPlanItem}>
+              <span className={classes.codexPlanLabel}>{t('xai_quota.resets_label')}</span>
+              <span className={classes.codexPlanValue}>{headerReset.absolute}</span>
+              {headerReset.relative && (
+                <span className={classes.quotaResetRelative}>{headerReset.relative}</span>
+              )}
+            </span>
+          )}
+        </div>
+      )}
+      {typeof billing.prepaidBalanceCents === 'number' && billing.prepaidBalanceCents > 0 && (
+        <div className={classes.codexPlan}>
+          <span className={classes.codexPlanLabel}>{t('xai_quota.prepaid')}</span>
+          <span className={classes.quotaAmount}>
+            {formatUsdFromCents(billing.prepaidBalanceCents, locale)}
           </span>
         </div>
       )}

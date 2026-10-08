@@ -29,23 +29,24 @@ import {
   vertexToResource,
   xaiToResource,
 } from './adapters';
-import { PROVIDER_BRAND_ORDER } from './descriptors';
-import { buildThinkingFromLevels } from './thinkingLevels';
-import {
-  readCommandCodeApiKey,
-  type CommandCodeAPIKeyEntry,
-  type ProviderBrand,
-  type CommandCodePluginConfig,
-  type ProviderEntryFormInput,
-  type ProviderGroup,
-  type ProviderResource,
-  type ProviderSnapshot,
-  type SponsorKeyEntryInput,
-  type SponsorProviderBrand,
-  type SponsorProviderRaw,
+import { PROVIDER_BRAND_ORDER, PROVIDER_DESCRIPTORS } from './descriptors';
+import { buildRuntimePolicy } from './runtimePolicy';
+import { buildModelOptions } from './modelOptions';
+import { pickProviderBehavior } from './providerBehavior';
+import type {
+  CommandCodeAPIKeyEntry,
+  CommandCodePluginConfig,
+  ModelEntryInput,
+  ProviderBrand,
+  ProviderEntryFormInput,
+  ProviderGroup,
+  ProviderResource,
+  ProviderSnapshot,
+  SponsorKeyEntryInput,
+  SponsorProviderBrand,
+  SponsorProviderRaw,
 } from './types';
-
-const COMMANDCODE_PLUGIN_ID = 'commandcode';
+import { readCommandCodeApiKey } from './types';
 import {
   buildApiKeyFunRaw,
   isApiKeyFunClaudeProvider,
@@ -68,6 +69,8 @@ import {
 } from './kimi';
 import { getSponsorProviderDefinition, type SponsorProtocolUrls } from './sponsorDefinitions';
 import { runSponsorMutationWithRecovery } from './sponsorMutationRecovery';
+
+const COMMANDCODE_PLUGIN_ID = 'commandcode';
 
 export interface UseProviderWorkbenchResult {
   connected: boolean;
@@ -104,7 +107,7 @@ export const readCommandCodeConfig = (config: Config | null): CommandCodePluginC
   return isRecord(value) ? (value as CommandCodePluginConfig) : null;
 };
 
-const hasConfigValues = (
+const hasCommandCodeConfig = (
   value: CommandCodePluginConfig | null | undefined
 ): value is CommandCodePluginConfig => Boolean(value && Object.keys(value).length > 0);
 
@@ -112,14 +115,13 @@ const resolveCommandCodeConfig = (
   config: Config | null,
   loaded: CommandCodePluginConfig | null | undefined
 ): CommandCodePluginConfig | null =>
-  hasConfigValues(loaded) ? loaded : readCommandCodeConfig(config);
+  hasCommandCodeConfig(loaded) ? loaded : readCommandCodeConfig(config);
 
 const COMMANDCODE_CONTEXT_LENGTH_KEYS = [
   'max_context_length',
   'max-context-length',
   'maxContextLength',
 ] as const;
-
 const COMMANDCODE_TEST_MODEL_KEYS = ['test_model', 'test-model', 'testModel'] as const;
 
 const hasOwnRecordKey = (value: Record<string, unknown>, key: string): boolean =>
@@ -136,7 +138,7 @@ export const buildCommandCodeConfig = (
   existing?: CommandCodePluginConfig | null
 ): Record<string, unknown> => {
   const next = { ...(existing ?? {}) } as Record<string, unknown>;
-  const hasOwn = (key: string): boolean => Object.prototype.hasOwnProperty.call(next, key);
+  const hasOwn = (key: string): boolean => hasOwnRecordKey(next, key);
   const existingKeyPool = Array.isArray(existing?.api_keys) ? existing.api_keys : [];
   const existingKeyEntriesByKey = new Map(
     existingKeyPool
@@ -144,14 +146,7 @@ export const buildCommandCodeConfig = (
       .map((entry) => [readCommandCodeApiKey(entry), entry] as const)
   );
 
-  // The editor deliberately keeps saved secrets in `existingApiKey`; a blank
-  // password therefore means "keep this key", while removing a row means
-  // "remove it from the pool". The management PATCH endpoint treats null as a
-  // deletion marker, so use it for fields the user explicitly cleared.
   if (input.apiKeyEntries !== undefined) {
-    // The form keeps one blank row as a visual placeholder. Treat that row as
-    // "unchanged" when an existing pool is present; removing a row explicitly
-    // produces an empty array and still clears the pool.
     const hasEnteredKey = input.apiKeyEntries.some(
       (entry) => entry.apiKey.trim() || entry.existingApiKey?.trim()
     );
@@ -163,16 +158,13 @@ export const buildCommandCodeConfig = (
           const oldEntryCandidate =
             existingKeyEntriesByKey.get(entry.existingApiKey?.trim() || '') ??
             existingKeyPool[index];
-          const oldEntry = isRecord(oldEntryCandidate)
-            ? (oldEntryCandidate as Record<string, unknown>)
-            : {};
+          const oldEntry = isRecord(oldEntryCandidate) ? oldEntryCandidate : {};
           const key =
             entry.apiKey.trim() ||
             entry.existingApiKey?.trim() ||
             readCommandCodeApiKey(oldEntry as CommandCodeAPIKeyEntry);
           if (!key) return null;
           const nextEntry: Record<string, unknown> = { ...oldEntry, key };
-          // Normalize the legacy alias once the canonical `key` field is known.
           delete nextEntry.api_key;
           const proxyUrl = entry.proxyUrl.trim();
           if (proxyUrl) nextEntry.proxy_url = proxyUrl;
@@ -183,22 +175,14 @@ export const buildCommandCodeConfig = (
           else nextEntry.priority = entry.priority;
           if (entry.disabled === true) nextEntry.disabled = true;
           else delete nextEntry.disabled;
-          // Per-key cooldown override is optional; leave hand-written values
-          // alone when the editor does not expose the field.
           if (entry.disableCooling !== undefined) {
             nextEntry.disable_cooling = entry.disableCooling;
           }
           return nextEntry;
         })
         .filter((entry): entry is Record<string, unknown> => entry !== null);
-
-      if (keyPool.length) {
-        next.api_keys = keyPool;
-        next.api_key = null;
-      } else {
-        next.api_keys = null;
-        next.api_key = null;
-      }
+      next.api_keys = keyPool.length ? keyPool : null;
+      next.api_key = null;
     }
   } else if (input.apiKey.trim()) {
     next.api_key = input.apiKey.trim();
@@ -208,7 +192,6 @@ export const buildCommandCodeConfig = (
   const baseUrl = input.baseUrl.trim();
   if (baseUrl) next.base_url = baseUrl;
   else if (hasOwn('base_url')) next.base_url = null;
-
   const proxyUrl = input.proxyUrl.trim();
   if (proxyUrl) next.proxy_url = proxyUrl;
   else if (hasOwn('proxy_url')) next.proxy_url = null;
@@ -224,41 +207,48 @@ export const buildCommandCodeConfig = (
       const name = model.name.trim();
       if (!name) return null;
       const oldModelCandidate = existingModelsByName.get(name) ?? existingModels[index];
-      const oldModel = isRecord(oldModelCandidate)
-        ? (oldModelCandidate as Record<string, unknown>)
-        : {};
+      const oldModel = isRecord(oldModelCandidate) ? oldModelCandidate : {};
       const nextModel: Record<string, unknown> = { ...oldModel, name };
       const alias = model.alias?.trim();
       if (alias) nextModel.alias = alias;
       else delete nextModel.alias;
 
-      // CommandCode plugin configs historically used snake_case while some
-      // host-shaped hand-written configs use kebab/camel case. Preserve an
-      // existing spelling and use the plugin-native spelling for new rows.
+      const legacyModalities = (model as ModelEntryInput & { inputModalities?: string[] })
+        .inputModalities;
+      const options = buildModelOptions({
+        ...model,
+        maxContextLength:
+          model.maxContextLength === undefined ? undefined : String(model.maxContextLength),
+        inputModalitiesText:
+          model.inputModalitiesText ??
+          (Array.isArray(legacyModalities) ? legacyModalities.join(', ') : undefined),
+      });
       const contextLengthKey = firstExistingKey(
         oldModel,
         COMMANDCODE_CONTEXT_LENGTH_KEYS,
         'max_context_length'
       );
-      if (model.maxContextLength !== undefined) {
-        nextModel[contextLengthKey] = model.maxContextLength;
+      if (options.maxContextLength !== undefined) {
+        nextModel[contextLengthKey] = options.maxContextLength;
       } else {
         COMMANDCODE_CONTEXT_LENGTH_KEYS.forEach((key) => delete nextModel[key]);
       }
-
-      if (model.thinkingLevelsTouched) {
-        const thinking = buildThinkingFromLevels(model.thinkingLevels);
-        if (thinking) nextModel.thinking = thinking;
-        else delete nextModel.thinking;
-      } else if ((model.thinkingJson ?? '').trim()) {
-        nextModel.thinking = parseThinkingJson(model.thinkingJson);
-      } else {
-        delete nextModel.thinking;
+      if (model.displayName !== undefined) {
+        if (options.displayName) nextModel.display_name = options.displayName;
+        else delete nextModel.display_name;
       }
-
+      if (
+        model.inputModalitiesTouched ||
+        model.inputModalitiesText !== undefined ||
+        legacyModalities !== undefined
+      ) {
+        if (options.inputModalities?.length) nextModel.input_modalities = options.inputModalities;
+        else delete nextModel.input_modalities;
+      }
+      if (options.thinking) nextModel.thinking = options.thinking;
+      else delete nextModel.thinking;
       if (model.priority !== undefined) nextModel.priority = model.priority;
       else delete nextModel.priority;
-
       const testModelKey = firstExistingKey(oldModel, COMMANDCODE_TEST_MODEL_KEYS, 'test_model');
       if (model.testModel?.trim()) nextModel[testModelKey] = model.testModel.trim();
       else COMMANDCODE_TEST_MODEL_KEYS.forEach((key) => delete nextModel[key]);
@@ -269,22 +259,10 @@ export const buildCommandCodeConfig = (
   else if (hasOwn('models')) next.models = null;
 
   next.enabled = !input.disabled;
-  if (input.sharedScheduling === undefined) {
-    if (hasOwn('shared_scheduling')) next.shared_scheduling = null;
-  } else {
-    next.shared_scheduling = input.sharedScheduling;
-  }
-  if (input.disableCooling === true) {
-    next.disable_cooling = true;
-  } else if (hasOwn('disable_cooling')) {
-    // Unchecked means "inherit host policy", not "force cooling on".
-    next.disable_cooling = null;
-  }
-  if (input.priority === undefined) {
-    if (hasOwn('priority')) next.priority = null;
-  } else {
-    next.priority = input.priority;
-  }
+  next.shared_scheduling = input.sharedScheduling ?? null;
+  if (input.disableCooling === true) next.disable_cooling = true;
+  else if (hasOwn('disable_cooling')) next.disable_cooling = null;
+  next.priority = input.priority ?? null;
   return next;
 };
 
@@ -298,16 +276,6 @@ const headersFromEntries = (
     out[key] = entry.value;
   });
   return out;
-};
-
-const parseThinkingJson = (value: string | undefined): Record<string, unknown> | undefined => {
-  const trimmed = (value ?? '').trim();
-  if (!trimmed) return undefined;
-  const parsed = JSON.parse(trimmed) as unknown;
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Thinking config must be a JSON object');
-  }
-  return parsed as Record<string, unknown>;
 };
 
 /**
@@ -334,25 +302,19 @@ export const buildExcludedModels = (
 
 const buildModelAliases = (
   models: ProviderEntryFormInput['models'] | undefined,
-  includeOpenAICompatFields = false
+  includeImage = false
 ): ModelAlias[] =>
   (models ?? [])
     .map((m) => {
       const entry: ModelAlias = {
+        sourceIndex: m.sourceIndex ?? null,
         name: m.name.trim(),
         alias: m.alias?.trim() || undefined,
         priority: m.priority,
-        testModel: m.testModel,
-        maxContextLength: m.maxContextLength,
-        thinking: m.thinkingLevelsTouched
-          ? buildThinkingFromLevels(m.thinkingLevels)
-          : parseThinkingJson(m.thinkingJson),
+        ...buildModelOptions(m),
       };
-      if (includeOpenAICompatFields) {
+      if (includeImage) {
         entry.image = m.image === true;
-        if (m.inputModalities?.length) {
-          entry.inputModalities = m.inputModalities;
-        }
       }
       return entry;
     })
@@ -368,6 +330,7 @@ const buildProviderKeyConfig = (
   const excluded = buildExcludedModels(input.excludedModelsText, input.disabled, brand);
   const apiKeyChanged = input.apiKey.trim().length > 0;
   const next: ProviderKeyConfig = {
+    source: existing?.source,
     apiKey: apiKeyChanged ? input.apiKey.trim() : (existing?.apiKey ?? ''),
     priority: input.priority,
     weight: input.weight,
@@ -377,18 +340,18 @@ const buildProviderKeyConfig = (
     models: models.length ? models : undefined,
     headers: Object.keys(headers).length ? headers : undefined,
     excludedModels: excluded,
-    disableCooling: input.disableCooling === true,
-    requestRetry: input.requestRetryTouched ? (input.requestRetry ?? -1) : existing?.requestRetry,
-    requestScopedErrors: input.requestScopedErrorsTouched
-      ? (input.requestScopedErrors ?? [])
-      : existing?.requestScopedErrors,
+    disableCooling: input.disableCooling,
+    ...(input.runtimePolicy
+      ? buildRuntimePolicy(
+          input.runtimePolicy,
+          PROVIDER_DESCRIPTORS[brand].supportsRequestScopedErrors
+        )
+      : {}),
     authIndex: existing?.authIndex,
+    ...pickProviderBehavior(input, brand),
   };
   if ((brand === 'codex' || brand === 'xai') && input.websockets !== undefined) {
     next.websockets = input.websockets;
-  }
-  if (brand === 'codex' && input.alphaSearch !== undefined) {
-    next.alphaSearch = input.alphaSearch;
   }
   if (brand === 'claude' && input.cloak) {
     next.cloak = {
@@ -417,6 +380,7 @@ const buildOpenAIConfig = (
           entry.existingApiKey?.trim() || existing?.apiKeyEntries?.[index]?.apiKey?.trim() || '';
         return {
           apiKey: entry.apiKey.trim() || fallbackApiKey,
+          sourceIndex: entry.sourceIndex,
           proxyUrl: entry.proxyUrl.trim() || undefined,
           weight: entry.weight,
           authIndex: entry.authIndex?.trim() || undefined,
@@ -431,15 +395,12 @@ const buildOpenAIConfig = (
     prefix: input.prefix.trim() || undefined,
     apiKeyEntries,
     disabled: input.disabled,
-    disableCooling: input.disableCooling === true,
-    requestRetry: input.requestRetryTouched ? (input.requestRetry ?? -1) : existing?.requestRetry,
-    requestScopedErrors: input.requestScopedErrorsTouched
-      ? (input.requestScopedErrors ?? [])
-      : existing?.requestScopedErrors,
+    ...pickProviderBehavior(input, 'openaiCompatibility'),
+    disableCooling: input.disableCooling,
+    ...(input.runtimePolicy ? buildRuntimePolicy(input.runtimePolicy) : {}),
     headers: Object.keys(headers).length ? headers : undefined,
     models: models.length ? models : undefined,
     priority: input.priority,
-    testModel: input.testModel?.trim() || undefined,
   };
 };
 
@@ -471,9 +432,11 @@ const buildSponsorOpenAIConfig = (
     ...(existing ?? {}),
     name: providerName,
     baseUrl: urls.openai,
+    ...pickProviderBehavior(entry, 'openaiCompatibility'),
     prefix: entry.prefix.trim() || undefined,
     disabled: entry.disabled,
-    disableCooling: entry.disableCooling === true,
+    disableCooling: entry.disableCooling,
+    ...(entry.runtimePolicy ? buildRuntimePolicy(entry.runtimePolicy) : {}),
     priority: entry.priority,
     apiKeyEntries,
     models: models.length ? models : undefined,
@@ -497,11 +460,13 @@ const buildSponsorProviderKeyConfig = (
     ...(existing ?? {}),
     apiKey,
     baseUrl: protocol === 'claude' ? urls.anthropic : urls.codex,
+    ...pickProviderBehavior(entry, protocol),
     proxyUrl: entry.proxyUrl.trim() || undefined,
     prefix: entry.prefix.trim() || undefined,
     priority: entry.priority,
     weight: entry.weight,
-    disableCooling: entry.disableCooling === true,
+    disableCooling: entry.disableCooling,
+    ...(entry.runtimePolicy ? buildRuntimePolicy(entry.runtimePolicy) : {}),
     excludedModels: excluded,
     models: models.length ? models : undefined,
   };
@@ -527,7 +492,8 @@ const buildSponsorGeminiConfig = (
     prefix: entry.prefix.trim() || undefined,
     priority: entry.priority,
     weight: entry.weight,
-    disableCooling: entry.disableCooling === true,
+    disableCooling: entry.disableCooling,
+    ...(entry.runtimePolicy ? buildRuntimePolicy(entry.runtimePolicy) : {}),
     excludedModels: excluded,
     models: models.length ? models : undefined,
   };
@@ -566,7 +532,7 @@ const toggleSponsorConfig = async (raw: SponsorProviderRaw, disabled: boolean) =
     });
   }
   for (const item of raw.openai) {
-    await providersApi.updateOpenAIProviderDisabled(item.index, disabled);
+    await providersApi.updateOpenAIProviderDisabled(item.index, disabled, item.config.source);
   }
 };
 
@@ -693,8 +659,6 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [mutating, setMutating] = useState<boolean>(false);
   const [fetchedAt, setFetchedAt] = useState<string>(() => new Date().toISOString());
-  // Plugin config is intentionally loaded through /plugins/:id/config. The
-  // generic /config response only exposes host-owned enabled/priority fields.
   const [commandCodeConfig, setCommandCodeConfig] = useState<CommandCodePluginConfig | null>(null);
 
   const hasFetchedRef = useRef(false);
@@ -728,9 +692,6 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
             : null
         );
       } else {
-        // A backend without plugin management support should not prevent the
-        // built-in provider page from loading. Keep only the host metadata
-        // fallback in that case.
         setCommandCodeConfig(null);
       }
       setFetchedAt(new Date().toISOString());
@@ -795,13 +756,20 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
             current?.config
           );
           if (current) {
-            await providersApi.updateGeminiKey(current.config.apiKey, current.config.baseUrl, next);
+            await providersApi.updateGeminiKey(current.config.apiKey, current.config.baseUrl, {
+              ...next,
+              source: current.config.source,
+            });
           } else {
             await providersApi.createGeminiKey(next);
           }
         } else {
           for (const item of raw.gemini) {
-            await providersApi.deleteGeminiKey(item.config.apiKey, item.config.baseUrl);
+            await providersApi.deleteGeminiKey(
+              item.config.apiKey,
+              item.config.baseUrl,
+              item.config.source
+            );
           }
         }
       }
@@ -818,14 +786,18 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
           await providersApi.updateCodexConfig(
             currentCodex.config.apiKey,
             currentCodex.config.baseUrl,
-            next
+            { ...next, source: currentCodex.config.source }
           );
         } else {
           await providersApi.createCodexConfig(next);
         }
       } else {
         for (const item of raw.codex) {
-          await providersApi.deleteCodexConfig(item.config.apiKey, item.config.baseUrl);
+          await providersApi.deleteCodexConfig(
+            item.config.apiKey,
+            item.config.baseUrl,
+            item.config.source
+          );
         }
       }
 
@@ -841,14 +813,18 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
           await providersApi.updateClaudeConfig(
             currentClaude.config.apiKey,
             currentClaude.config.baseUrl,
-            next
+            { ...next, source: currentClaude.config.source }
           );
         } else {
           await providersApi.createClaudeConfig(next);
         }
       } else {
         for (const item of raw.claude) {
-          await providersApi.deleteClaudeConfig(item.config.apiKey, item.config.baseUrl);
+          await providersApi.deleteClaudeConfig(
+            item.config.apiKey,
+            item.config.baseUrl,
+            item.config.source
+          );
         }
       }
 
@@ -870,7 +846,7 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
           await providersApi.createOpenAIProvider(next);
         }
       } else if (currentOpenAI) {
-        await providersApi.deleteOpenAIProvider(currentOpenAI.index);
+        await providersApi.deleteOpenAIProvider(currentOpenAI.index, currentOpenAI.config.source);
       }
     },
     [config]
@@ -1016,35 +992,66 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
       try {
         const sel = resource.selector;
         if (sel.brand === 'gemini') {
-          await providersApi.deleteGeminiKey(sel.apiKey, sel.baseUrl);
+          await providersApi.deleteGeminiKey(
+            sel.apiKey,
+            sel.baseUrl,
+            (resource.raw as ProviderKeyConfig).source
+          );
           const next = (config?.geminiApiKeys ?? []).filter((_, i) => i !== sel.index);
           updateConfigValue('gemini-api-key', next);
         } else if (sel.brand === 'interactions') {
-          await providersApi.deleteInteractionsKey(sel.apiKey, sel.baseUrl);
+          await providersApi.deleteInteractionsKey(
+            sel.apiKey,
+            sel.baseUrl,
+            (resource.raw as ProviderKeyConfig).source
+          );
           const next = (config?.interactionsApiKeys ?? []).filter((_, i) => i !== sel.index);
           updateConfigValue('interactions-api-key', next);
         } else if (sel.brand === 'codex') {
-          await providersApi.deleteCodexConfig(sel.apiKey, sel.baseUrl);
+          await providersApi.deleteCodexConfig(
+            sel.apiKey,
+            sel.baseUrl,
+            (resource.raw as ProviderKeyConfig).source
+          );
           const next = (config?.codexApiKeys ?? []).filter((_, i) => i !== sel.index);
           updateConfigValue('codex-api-key', next);
         } else if (sel.brand === 'meta') {
-          await providersApi.deleteMetaConfig(sel.apiKey, sel.baseUrl);
+          await providersApi.deleteMetaConfig(
+            sel.apiKey,
+            sel.baseUrl,
+            (resource.raw as ProviderKeyConfig).source
+          );
           const next = (config?.metaApiKeys ?? []).filter((_, i) => i !== sel.index);
           updateConfigValue('meta-api-key', next);
         } else if (sel.brand === 'xai') {
-          await providersApi.deleteXAIConfig(sel.apiKey, sel.baseUrl);
+          await providersApi.deleteXAIConfig(
+            sel.apiKey,
+            sel.baseUrl,
+            (resource.raw as ProviderKeyConfig).source
+          );
           const next = (config?.xaiApiKeys ?? []).filter((_, i) => i !== sel.index);
           updateConfigValue('xai-api-key', next);
         } else if (sel.brand === 'claude') {
-          await providersApi.deleteClaudeConfig(sel.apiKey, sel.baseUrl);
+          await providersApi.deleteClaudeConfig(
+            sel.apiKey,
+            sel.baseUrl,
+            (resource.raw as ProviderKeyConfig).source
+          );
           const next = (config?.claudeApiKeys ?? []).filter((_, i) => i !== sel.index);
           updateConfigValue('claude-api-key', next);
         } else if (sel.brand === 'vertex') {
-          await providersApi.deleteVertexConfig(sel.apiKey, sel.baseUrl);
+          await providersApi.deleteVertexConfig(
+            sel.apiKey,
+            sel.baseUrl,
+            (resource.raw as ProviderKeyConfig).source
+          );
           const next = (config?.vertexApiKeys ?? []).filter((_, i) => i !== sel.index);
           updateConfigValue('vertex-api-key', next);
         } else if (sel.brand === 'openaiCompatibility') {
-          await providersApi.deleteOpenAIProvider(sel.index);
+          await providersApi.deleteOpenAIProvider(
+            sel.index,
+            (resource.raw as OpenAIProviderConfig).source
+          );
           const next = (config?.openaiCompatibility ?? []).filter(
             (item, index) => (item.sourceIndex ?? index) !== sel.index
           );
@@ -1060,19 +1067,34 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
           await runSponsorMutationWithRecovery(async () => {
             const raw = resource.raw as SponsorProviderRaw;
             for (const item of raw.gemini) {
-              await providersApi.deleteGeminiKey(item.config.apiKey, item.config.baseUrl);
+              await providersApi.deleteGeminiKey(
+                item.config.apiKey,
+                item.config.baseUrl,
+                item.config.source
+              );
             }
             for (const item of raw.codex) {
-              await providersApi.deleteCodexConfig(item.config.apiKey, item.config.baseUrl);
+              await providersApi.deleteCodexConfig(
+                item.config.apiKey,
+                item.config.baseUrl,
+                item.config.source
+              );
             }
             for (const item of raw.claude) {
-              await providersApi.deleteClaudeConfig(item.config.apiKey, item.config.baseUrl);
+              await providersApi.deleteClaudeConfig(
+                item.config.apiKey,
+                item.config.baseUrl,
+                item.config.source
+              );
             }
             const openAIIndices = raw.openai
               .map((item) => item.index)
               .sort((left, right) => right - left);
             for (const index of openAIIndices) {
-              await providersApi.deleteOpenAIProvider(index);
+              await providersApi.deleteOpenAIProvider(
+                index,
+                raw.openai.find((item) => item.index === index)?.config.source
+              );
             }
           }, refetch);
         }
@@ -1132,7 +1154,11 @@ export function useProviderWorkbench(): UseProviderWorkbenchResult {
             await providersApi.updateVertexConfig(selector.apiKey, selector.baseUrl, next);
           }
         } else if (brand === 'openaiCompatibility' && selector.brand === 'openaiCompatibility') {
-          await providersApi.updateOpenAIProviderDisabled(selector.index, disabled);
+          await providersApi.updateOpenAIProviderDisabled(
+            selector.index,
+            disabled,
+            (resource.raw as OpenAIProviderConfig).source
+          );
         } else if (brand === 'commandcode' && selector.brand === 'commandcode') {
           await pluginsApi.patchConfig(COMMANDCODE_PLUGIN_ID, { enabled: !disabled });
         } else if (

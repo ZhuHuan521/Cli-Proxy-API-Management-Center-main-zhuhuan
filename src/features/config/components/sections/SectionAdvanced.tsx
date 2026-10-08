@@ -19,11 +19,19 @@ import {
 } from '../fields/FieldPrimitives';
 import { PluginStoreAuthEditor } from '../blocks/PluginStoreAuthEditor';
 import { StringListEditor } from '../blocks/StringListEditor';
+import { getValidationMessage } from '../blocks/shared';
+import { SectionOAuthBehavior } from './SectionOAuthBehavior';
 
 const Icon = CONFIG_TAB_ICONS.advanced;
 
 /** 06 高级与实验：插件源、供应商敏感词、签名缓存与请求头默认值。 */
-export function SectionAdvanced({ values, disabled, animateIn, onChange }: ConfigSectionProps) {
+export function SectionAdvanced({
+  values,
+  validationErrors,
+  disabled,
+  animateIn,
+  onChange,
+}: ConfigSectionProps) {
   const { t } = useTranslation();
 
   const handlePluginStoreSourcesChange = useCallback(
@@ -52,6 +60,12 @@ export function SectionAdvanced({ values, disabled, animateIn, onChange }: Confi
       animateIn={animateIn}
     >
       <FieldStack>
+        <SectionOAuthBehavior
+          values={values}
+          validationErrors={validationErrors}
+          disabled={disabled}
+          onChange={onChange}
+        />
         <Collapsible
           label={t('config_management.visual.sections.advanced.plugins_title')}
           defaultOpen={false}
@@ -217,104 +231,6 @@ export function SectionAdvanced({ values, disabled, animateIn, onChange }: Confi
         </Collapsible>
 
         <Collapsible
-          label={t('config_management.visual.sections.advanced.codex_title')}
-          defaultOpen={false}
-        >
-          <FieldStack>
-            <FieldGrid>
-              <FieldAnchor fieldId="codexIdentityConfuse">
-                <ToggleRow
-                  title={t('config_management.visual.sections.system.codex_identity_confuse')}
-                  description={t(
-                    'config_management.visual.sections.system.codex_identity_confuse_desc'
-                  )}
-                  checked={values.codexIdentityConfuse}
-                  disabled={disabled}
-                  onChange={(codexIdentityConfuse) => onChange({ codexIdentityConfuse })}
-                />
-              </FieldAnchor>
-              <FieldAnchor fieldId="codexResponseSteering">
-                <ToggleRow
-                  title={t('config_management.visual.sections.system.codex_response_steering')}
-                  description={t(
-                    'config_management.visual.sections.system.codex_response_steering_desc'
-                  )}
-                  checked={values.codexResponseSteering}
-                  disabled={disabled}
-                  onChange={(codexResponseSteering) => onChange({ codexResponseSteering })}
-                />
-              </FieldAnchor>
-              <FieldAnchor fieldId="codexDisableCloaking">
-                <ToggleRow
-                  title={t('config_management.visual.sections.system.codex_disable_cloaking')}
-                  description={t(
-                    'config_management.visual.sections.system.codex_disable_cloaking_desc'
-                  )}
-                  checked={values.codexDisableCloaking}
-                  disabled={disabled}
-                  onChange={(codexDisableCloaking) => onChange({ codexDisableCloaking })}
-                />
-              </FieldAnchor>
-              <FieldAnchor fieldId="codexStreamBootstrapBuffering">
-                <ToggleRow
-                  title={t(
-                    'config_management.visual.sections.system.codex_stream_bootstrap_buffering'
-                  )}
-                  description={t(
-                    'config_management.visual.sections.system.codex_stream_bootstrap_buffering_desc'
-                  )}
-                  checked={values.codexStreamBootstrapBuffering}
-                  disabled={disabled}
-                  onChange={(codexStreamBootstrapBuffering) =>
-                    onChange({ codexStreamBootstrapBuffering })
-                  }
-                />
-              </FieldAnchor>
-              <FieldAnchor fieldId="codexStreamBootstrapTimeout">
-                <Input
-                  label={t('config_management.visual.sections.system.codex_stream_bootstrap_timeout')}
-                  hint={t(
-                    'config_management.visual.sections.system.codex_stream_bootstrap_timeout_desc'
-                  )}
-                  placeholder="20s"
-                  value={values.codexStreamBootstrapTimeout}
-                  onChange={(e) => onChange({ codexStreamBootstrapTimeout: e.target.value })}
-                  disabled={disabled}
-                />
-              </FieldAnchor>
-              <FieldAnchor fieldId="codexOptimizeMultiAgentV2">
-                <ToggleRow
-                  title={t('config_management.visual.sections.system.codex_optimize_multi_agent_v2')}
-                  description={t(
-                    'config_management.visual.sections.system.codex_optimize_multi_agent_v2_desc'
-                  )}
-                  checked={values.codexOptimizeMultiAgentV2}
-                  disabled={disabled}
-                  onChange={(codexOptimizeMultiAgentV2) =>
-                    onChange({ codexOptimizeMultiAgentV2 })
-                  }
-                />
-              </FieldAnchor>
-              <FieldAnchor fieldId="codexOrphanDelegationCompatibility">
-                <ToggleRow
-                  title={t(
-                    'config_management.visual.sections.system.codex_orphan_delegation_compatibility'
-                  )}
-                  description={t(
-                    'config_management.visual.sections.system.codex_orphan_delegation_compatibility_desc'
-                  )}
-                  checked={values.codexOrphanDelegationCompatibility}
-                  disabled={disabled}
-                  onChange={(codexOrphanDelegationCompatibility) =>
-                    onChange({ codexOrphanDelegationCompatibility })
-                  }
-                />
-              </FieldAnchor>
-            </FieldGrid>
-          </FieldStack>
-        </Collapsible>
-
-        <Collapsible
           label={t('config_management.visual.sections.headers.title')}
           hint={t('config_management.visual.sections.headers.description')}
           defaultOpen={false}
@@ -367,6 +283,17 @@ export function SectionAdvanced({ values, disabled, animateIn, onChange }: Confi
                   value={values.claudeHeaderArch}
                   onChange={(e) => onChange({ claudeHeaderArch: e.target.value })}
                   disabled={disabled}
+                />
+              </FieldAnchor>
+              <FieldAnchor fieldId="claudeHeaderTimezone">
+                <Input
+                  label={t('config_management.visual.additions.claudeHeaderTimezone.label')}
+                  hint={t('config_management.visual.additions.claudeHeaderTimezone.hint')}
+                  type="text"
+                  value={values.claudeHeaderTimezone}
+                  onChange={(e) => onChange({ claudeHeaderTimezone: e.target.value })}
+                  disabled={disabled}
+                  error={getValidationMessage(t, validationErrors?.claudeHeaderTimezone)}
                 />
               </FieldAnchor>
               <FieldAnchor fieldId="claudeHeaderTimeout">

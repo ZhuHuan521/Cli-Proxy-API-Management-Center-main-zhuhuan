@@ -18,11 +18,10 @@ import {
   type ExcludedModelsCatalogState,
 } from '@/components/excludedModels';
 import { hasDisableAllModelsRule } from '@/components/providers/utils';
-import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
+import type { GeminiKeyConfig, ModelAlias, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import type { ModelInfo } from '@/utils/models';
 import { PROVIDER_DESCRIPTORS } from '../../descriptors';
-import { modelAliasToFormEntry } from '../../modelAliasForm';
-import { readThinkingLevels } from '../../thinkingLevels';
+import { mergeDiscoveredModels } from '../../modelEntries';
 import type {
   ApiKeyEntryInput,
   CommandCodePluginConfig,
@@ -38,9 +37,13 @@ import { ModelDiscoveryPanel } from './ModelDiscoveryPanel';
 import { ConnectivityStatusIcon } from './ConnectivityStatusIcon';
 import { ApiKeyEntriesEditor } from './ApiKeyEntriesEditor';
 import { ModelEntriesEditor } from './ModelEntriesEditor';
-import { RequestScopedErrorsEditor } from './RequestScopedErrorsEditor';
 import styles from './sharedForm.module.scss';
 import { MAX_CREDENTIAL_WEIGHT } from '@/utils/credentialWeight';
+import { readRuntimePolicy, validateRuntimePolicy } from '../../runtimePolicy';
+import { readModelOptions, validateModelOptions } from '../../modelOptions';
+import { RuntimePolicyEditor } from './RuntimePolicyEditor';
+import { ProviderBehaviorEditor } from './ProviderBehaviorEditor';
+import { pickProviderBehavior } from '../../providerBehavior';
 
 /** 模块级常量，免得每次渲染都给 picker 一个新数组引用。 */
 const DISABLE_ALL_RULES = [DISABLE_ALL_RULE];
@@ -78,20 +81,34 @@ const isClaudeLikeBrand = (brand: ProviderBrand): boolean => brand === 'claude';
 
 type CommandCodeModel = NonNullable<CommandCodePluginConfig['models']>[number];
 
-const readCommandCodeModelContextLength = (model: CommandCodeModel) => {
-  const raw = model.max_context_length ?? model['max-context-length'] ?? model.maxContextLength;
-  if (raw === undefined || raw === null || String(raw).trim() === '') return undefined;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-};
-
-const readCommandCodeModelThinking = (
-  model: CommandCodeModel
-): Record<string, unknown> | undefined => {
-  const value = model.thinking;
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+const commandCodeModelToFormEntry = (model: CommandCodeModel): ModelEntryInput => {
+  const rawContextLength =
+    model.max_context_length ?? model['max-context-length'] ?? model.maxContextLength;
+  const parsedContextLength = Number(rawContextLength);
+  const thinking =
+    model.thinking && typeof model.thinking === 'object' && !Array.isArray(model.thinking)
+      ? model.thinking
+      : undefined;
+  const normalized: ModelAlias = {
+    name: model.name?.trim() || model.alias?.trim() || '',
+    alias: model.alias?.trim() || undefined,
+    priority: model.priority,
+    displayName: model.display_name?.trim() || undefined,
+    maxContextLength:
+      Number.isFinite(parsedContextLength) && parsedContextLength > 0
+        ? parsedContextLength
+        : undefined,
+    inputModalities: Array.isArray(model.input_modalities) ? model.input_modalities : undefined,
+    thinking,
+  };
+  return {
+    name: normalized.name,
+    alias: normalized.alias ?? '',
+    priority: normalized.priority,
+    testModel: model.test_model ?? model['test-model'] ?? model.testModel,
+    thinkingJson: formatJsonObject(thinking),
+    ...readModelOptions(normalized),
+  };
 };
 
 function buildInitialForm(
@@ -102,13 +119,15 @@ function buildInitialForm(
   if (brand === 'commandcode') {
     const cfg = mode === 'create' || !resource ? {} : (resource.raw as CommandCodePluginConfig);
     const configuredKeyEntries = Array.isArray(cfg.api_keys)
-      ? cfg.api_keys.map((entry) => ({
+      ? cfg.api_keys.map((entry, sourceIndex) => ({
+          sourceIndex,
           apiKey: '',
           existingApiKey: readCommandCodeApiKey(entry),
           proxyUrl: entry.proxy_url?.trim() || '',
           weight: entry.weight,
           priority: entry.priority,
           disabled: entry.disabled === true,
+          disableCooling: entry.disable_cooling,
         }))
       : cfg.api_key?.trim()
         ? [
@@ -129,32 +148,13 @@ function buildInitialForm(
       proxyUrl: cfg.proxy_url?.trim() || '',
       prefix: '',
       disabled: mode === 'create' ? false : cfg.enabled !== true,
-      sharedScheduling: cfg.shared_scheduling !== false,
-      disableCooling: cfg.disable_cooling === true,
-      requestRetry: undefined,
-      requestRetryTouched: false,
-      requestScopedErrors: [],
-      requestScopedErrorsTouched: false,
+      disableCooling: cfg.disable_cooling,
       priority: cfg.priority,
       weight: undefined,
-      models: cfg.models?.length
-        ? cfg.models.map((model) => ({
-            name: model.name?.trim() || model.alias?.trim() || '',
-            alias: model.alias?.trim() || '',
-            priority: model.priority,
-            testModel: model.test_model,
-            maxContextLength: readCommandCodeModelContextLength(model),
-            thinkingJson: formatJsonObject(readCommandCodeModelThinking(model)),
-            thinkingLevels: readThinkingLevels(readCommandCodeModelThinking(model)),
-          }))
-        : [emptyModel()],
+      models: cfg.models?.length ? cfg.models.map(commandCodeModelToFormEntry) : [emptyModel()],
       headers: [emptyHeader()],
       excludedModelsText: '',
-      websockets: undefined,
-      alphaSearch: undefined,
-      cloak: undefined,
-      fingerprintProfile: undefined,
-      testModel: undefined,
+      sharedScheduling: cfg.shared_scheduling !== false,
       apiKeyEntries: configuredKeyEntries.length ? configuredKeyEntries : [emptyApiKeyEntry()],
     };
   }
@@ -166,18 +166,14 @@ function buildInitialForm(
       proxyUrl: '',
       prefix: '',
       disabled: false,
-      disableCooling: false,
-      requestRetry: undefined,
-      requestRetryTouched: false,
-      requestScopedErrors: [],
-      requestScopedErrorsTouched: false,
+      disableCooling: undefined,
+      runtimePolicy: readRuntimePolicy(),
       priority: undefined,
       weight: undefined,
       models: [emptyModel()],
       headers: [emptyHeader()],
       excludedModelsText: '',
       websockets: brand === 'codex' || brand === 'xai' ? false : undefined,
-      alphaSearch: brand === 'codex' ? false : undefined,
       cloak: isClaudeLikeBrand(brand)
         ? { mode: '', strictMode: false, sensitiveWordsText: '', cacheUserId: false }
         : undefined,
@@ -206,24 +202,31 @@ function buildInitialForm(
       proxyUrl: '',
       prefix: cfg.prefix ?? '',
       disabled: cfg.disabled === true,
-      disableCooling: cfg.disableCooling === true,
-      requestRetry: cfg.requestRetry,
-      requestRetryTouched: false,
-      requestScopedErrors: cfg.requestScopedErrors ?? [],
-      requestScopedErrorsTouched: false,
+      disableCooling: cfg.disableCooling,
+      runtimePolicy: readRuntimePolicy(cfg),
+      ...pickProviderBehavior(cfg, brand),
       priority: cfg.priority,
       models: cfg.models?.length
-        ? cfg.models.map(modelAliasToFormEntry)
+        ? cfg.models.map((m) => ({
+            sourceIndex: m.sourceIndex,
+            name: m.name,
+            alias: m.alias ?? '',
+            priority: m.priority,
+            image: m.image === true,
+            thinkingJson: formatJsonObject(m.thinking),
+            ...readModelOptions(m),
+          }))
         : [emptyModel()],
       headers: cfg.headers
         ? Object.entries(cfg.headers).map(([k, v]) => ({ key: k, value: String(v) }))
         : [emptyHeader()],
       excludedModelsText: '',
-      testModel: cfg.testModel ?? '',
+      testModel: '',
       apiKeyEntries: cfg.apiKeyEntries?.length
         ? cfg.apiKeyEntries.map((entry) => ({
             apiKey: '',
             existingApiKey: entry.apiKey,
+            sourceIndex: entry.sourceIndex,
             proxyUrl: entry.proxyUrl ?? '',
             weight: entry.weight,
             authIndex: entry.authIndex,
@@ -246,15 +249,20 @@ function buildInitialForm(
     proxyUrl: cfg.proxyUrl ?? '',
     prefix: cfg.prefix ?? '',
     disabled,
-    disableCooling: cfg.disableCooling === true,
-    requestRetry: cfg.requestRetry,
-    requestRetryTouched: false,
-    requestScopedErrors: cfg.requestScopedErrors ?? [],
-    requestScopedErrorsTouched: false,
+    disableCooling: cfg.disableCooling,
+    runtimePolicy: readRuntimePolicy(cfg),
+    ...pickProviderBehavior(cfg, brand),
     priority: cfg.priority,
     weight: cfg.weight,
     models: cfg.models?.length
-      ? cfg.models.map(modelAliasToFormEntry)
+      ? cfg.models.map((m) => ({
+          sourceIndex: m.sourceIndex,
+          name: m.name,
+          alias: m.alias ?? '',
+          priority: m.priority,
+          thinkingJson: formatJsonObject(m.thinking),
+          ...readModelOptions(m),
+        }))
       : [emptyModel()],
     headers: cfg.headers
       ? Object.entries(cfg.headers).map(([k, v]) => ({ key: k, value: String(v) }))
@@ -264,7 +272,6 @@ function buildInitialForm(
       brand === 'codex' || brand === 'xai'
         ? (cfg as ProviderKeyConfig).websockets === true
         : undefined,
-    alphaSearch: brand === 'codex' ? (cfg as ProviderKeyConfig).alphaSearch === true : undefined,
     cloak: isClaudeLikeBrand(brand)
       ? {
           mode: (cfg as ProviderKeyConfig).cloak?.mode ?? '',
@@ -328,15 +335,15 @@ export function BaseProviderForm({
     return (resource.raw as { apiKey?: string } | undefined)?.apiKey ?? '';
   }, [brand, mode, resource]);
 
-  const fallbackAuthIndex = useMemo(() => {
-    if (mode !== 'edit' || !resource) return '';
-    return (resource.raw as { authIndex?: string } | undefined)?.authIndex ?? '';
-  }, [mode, resource]);
-
   const commandCodeProtocolVersion = useMemo(() => {
     if (brand !== 'commandcode' || !resource) return undefined;
     return (resource.raw as CommandCodePluginConfig).protocol_version?.trim() || undefined;
   }, [brand, resource]);
+
+  const fallbackAuthIndex = useMemo(() => {
+    if (mode !== 'edit' || !resource) return '';
+    return (resource.raw as { authIndex?: string } | undefined)?.authIndex ?? '';
+  }, [mode, resource]);
 
   const connectivityMessages = useMemo<ConnectivityErrorMessages>(
     () => ({
@@ -354,6 +361,7 @@ export function BaseProviderForm({
     {
       brand,
       baseUrl: form.baseUrl,
+      proxyUrl: form.proxyUrl,
       testModel: form.testModel,
       models: form.models,
       formHeaders: form.headers,
@@ -368,6 +376,7 @@ export function BaseProviderForm({
   const discovery = useModelDiscovery({
     brand,
     baseUrl: form.baseUrl,
+    proxyUrl: form.proxyUrl,
     formHeaders: form.headers,
     apiKeyEntries: form.apiKeyEntries,
     apiKey: form.apiKey,
@@ -424,35 +433,7 @@ export function BaseProviderForm({
 
   const applyDiscoveredModels = (incoming: ModelInfo[]) => {
     if (!incoming.length) return;
-    setForm((prev) => {
-      const seen = new Set<string>();
-      const next: ModelEntryInput[] = [];
-      prev.models.forEach((entry) => {
-        const trimmed = (entry.name ?? '').trim();
-        if (trimmed) {
-          if (seen.has(trimmed)) return;
-          seen.add(trimmed);
-        }
-        next.push(entry);
-      });
-      // If the existing list is just an empty placeholder row, drop it.
-      const placeholderIdx = next.findIndex(
-        (it) => !(it.name ?? '').trim() && !(it.alias ?? '').trim()
-      );
-      if (placeholderIdx !== -1) {
-        next.splice(placeholderIdx, 1);
-      }
-      incoming.forEach((info) => {
-        const trimmed = info.name.trim();
-        if (!trimmed || seen.has(trimmed)) return;
-        seen.add(trimmed);
-        next.push({
-          name: trimmed,
-          alias: (info.alias ?? '').trim(),
-        });
-      });
-      return { ...prev, models: next };
-    });
+    setForm((prev) => ({ ...prev, models: mergeDiscoveredModels(prev.models, incoming) }));
   };
 
   const updateField = <K extends keyof ProviderEntryFormInput>(
@@ -481,64 +462,35 @@ export function BaseProviderForm({
   };
 
   const validate = (): string | null => {
+    const modelError = validateModelOptions(form.models);
+    if (modelError) return t(modelError);
+    if (form.runtimePolicy) {
+      const policyError = validateRuntimePolicy(
+        form.runtimePolicy,
+        descriptor.supportsRequestScopedErrors
+      );
+      if (policyError) return t(policyError);
+    }
     if (descriptor.supportsName && !form.name.trim()) {
       return t('providersPage.form.validation.nameRequired');
     }
-    const hasCommandCodeKey = (form.apiKeyEntries ?? []).some(
-      (entry) => entry.apiKey.trim() || entry.existingApiKey?.trim()
-    );
-    if (brand === 'commandcode' && !form.disabled && !hasCommandCodeKey) {
-      return t('providersPage.form.validation.apiKeyRequired');
-    }
-    if (
-      descriptor.supportsApiKey &&
-      brand !== 'commandcode' &&
-      mode === 'create' &&
-      !form.apiKey.trim()
-    ) {
+    if (descriptor.supportsApiKey && mode === 'create' && !form.apiKey.trim()) {
       return t('providersPage.form.validation.apiKeyRequired');
     }
     if (descriptor.baseUrlRequired && !form.baseUrl.trim()) {
       return t('providersPage.form.validation.baseUrlRequired');
     }
     const weights = [
-      ...(brand === 'openaiCompatibility' || brand === 'commandcode'
+      ...(brand === 'openaiCompatibility'
         ? (form.apiKeyEntries ?? []).map((entry) => entry.weight)
         : []),
-      ...(brand !== 'openaiCompatibility' && brand !== 'commandcode' ? [form.weight] : []),
+      ...(brand !== 'openaiCompatibility' ? [form.weight] : []),
     ];
     if (weights.some((weight) => weight !== undefined && !Number.isSafeInteger(weight))) {
       return t('providersPage.form.validation.weightInteger');
     }
     if (weights.some((weight) => weight !== undefined && weight > MAX_CREDENTIAL_WEIGHT)) {
       return t('providersPage.form.validation.weightMax', { max: MAX_CREDENTIAL_WEIGHT });
-    }
-    if (form.requestRetry !== undefined && !Number.isSafeInteger(form.requestRetry)) {
-      return t('providersPage.form.validation.requestRetryInteger');
-    }
-    if (
-      (form.requestScopedErrors ?? []).some(
-        (rule) =>
-          rule.status !== undefined &&
-          (!Number.isSafeInteger(rule.status) || rule.status < 100 || rule.status > 599)
-      )
-    ) {
-      return t('providersPage.form.validation.requestScopedStatus');
-    }
-    if (
-      brand === 'commandcode' &&
-      (form.apiKeyEntries ?? []).some(
-        (entry) => entry.priority !== undefined && !Number.isSafeInteger(entry.priority)
-      )
-    ) {
-      return t('plugin_management.invalid_priority');
-    }
-    if (
-      brand === 'commandcode' &&
-      form.priority !== undefined &&
-      !Number.isSafeInteger(form.priority)
-    ) {
-      return t('plugin_management.invalid_priority');
     }
     return null;
   };
@@ -607,14 +559,6 @@ export function BaseProviderForm({
         ? 'unavailable'
         : 'ready';
   const actualApiKeyEntries = form.apiKeyEntries ?? [];
-  const supportsDisableCooling =
-    brand === 'gemini' ||
-    brand === 'interactions' ||
-    brand === 'codex' ||
-    brand === 'meta' ||
-    brand === 'xai' ||
-    isClaudeLikeBrand(brand) ||
-    brand === 'openaiCompatibility' || brand === 'commandcode';
   const supportsModelImage = brand === 'openaiCompatibility';
   const singleConnectivity =
     brand === 'codex' || brand === 'meta' || brand === 'xai'
@@ -744,22 +688,20 @@ export function BaseProviderForm({
           </div>
         ) : null}
 
-        {descriptor.supportsPrefix || descriptor.supportsPriority ? (
+        {descriptor.supportsPrefix ? (
           <div className={styles.fieldRow}>
-            {descriptor.supportsPrefix ? (
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor={`${fid}-prefix`}>
-                  {t('providersPage.form.prefix')}
-                </label>
-                <input
-                  id={`${fid}-prefix`}
-                  className={styles.input}
-                  value={form.prefix}
-                  onChange={(e) => updateField('prefix', e.target.value)}
-                  disabled={mutating}
-                />
-              </div>
-            ) : null}
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor={`${fid}-prefix`}>
+                {t('providersPage.form.prefix')}
+              </label>
+              <input
+                id={`${fid}-prefix`}
+                className={styles.input}
+                value={form.prefix}
+                onChange={(e) => updateField('prefix', e.target.value)}
+                disabled={mutating}
+              />
+            </div>
             {descriptor.supportsPriority ? (
               <div className={styles.field}>
                 <label className={styles.label} htmlFor={`${fid}-prio`}>
@@ -805,45 +747,11 @@ export function BaseProviderForm({
           </div>
         ) : null}
 
-        {brand !== 'commandcode' ? (
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor={`${fid}-requestRetry`}>
-              {t('providersPage.form.requestRetry')}
-            </label>
-            <input
-              id={`${fid}-requestRetry`}
-              type="number"
-              className={styles.input}
-              value={form.requestRetry ?? ''}
-              placeholder={t('providersPage.form.requestRetryInherit')}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  requestRetry: e.target.value === '' ? undefined : Number(e.target.value),
-                  requestRetryTouched: true,
-                }))
-              }
-              disabled={mutating}
-            />
-            <span className={styles.labelHint}>{t('providersPage.form.requestRetryHint')}</span>
-          </div>
-        ) : null}
-
         {descriptor.supportsTestModel ? (
           <div className={styles.field}>
             <label className={styles.label} htmlFor={`${fid}-testModel`}>
               {t('providersPage.form.testModel')}
-              {brand === 'codex' ||
-              brand === 'meta' ||
-              brand === 'xai' ||
-              isClaudeLikeBrand(brand) ||
-              brand === 'gemini' ||
-              brand === 'interactions' ? (
-                <span className={styles.labelHint}>
-                  {' '}
-                  · {t('providersPage.form.testModelClaudeHint')}
-                </span>
-              ) : null}
+              <span className={styles.labelHint}> · {t('providersPage.form.testModelHint')}</span>
             </label>
             <Select
               id={`${fid}-testModel`}
@@ -897,22 +805,6 @@ export function BaseProviderForm({
           </label>
         ) : null}
 
-        {descriptor.supportsAlphaSearch ? (
-          <label className={styles.checkboxRow}>
-            <input
-              type="checkbox"
-              className={styles.checkboxBox}
-              checked={form.alphaSearch ?? false}
-              disabled={mutating}
-              onChange={(e) => updateField('alphaSearch', e.target.checked)}
-            />
-            <span className={styles.checkboxText}>
-              <span>{t('providersPage.form.alphaSearch')}</span>
-              <small>{t('providersPage.form.alphaSearchHint')}</small>
-            </span>
-          </label>
-        ) : null}
-
         {descriptor.supportsDisabled ? (
           <label className={styles.checkboxRow}>
             <input
@@ -930,37 +822,51 @@ export function BaseProviderForm({
         ) : null}
 
         {brand === 'commandcode' ? (
-          <label className={styles.checkboxRow}>
-            <input
-              type="checkbox"
-              className={styles.checkboxBox}
-              checked={form.sharedScheduling !== false}
-              disabled={mutating}
-              onChange={(e) => updateField('sharedScheduling', e.target.checked)}
-            />
-            <span className={styles.checkboxText}>
-              <span>{t('providersPage.form.commandCodeSharedScheduling')}</span>
-              <small>{t('providersPage.form.commandCodeSharedSchedulingHint')}</small>
-            </span>
-          </label>
-        ) : null}
-
-        {supportsDisableCooling ? (
-          <label className={styles.checkboxRow}>
-            <input
-              type="checkbox"
-              className={styles.checkboxBox}
-              checked={form.disableCooling ?? false}
-              disabled={mutating}
-              onChange={(e) => updateField('disableCooling', e.target.checked)}
-            />
-            <span className={styles.checkboxText}>
-              <span>{t('providersPage.form.disableCooling')}</span>
-              <small>{t('providersPage.form.disableCoolingHint')}</small>
-            </span>
-          </label>
+          <>
+            <label className={styles.checkboxRow}>
+              <input
+                type="checkbox"
+                className={styles.checkboxBox}
+                checked={form.sharedScheduling !== false}
+                disabled={mutating}
+                onChange={(event) => updateField('sharedScheduling', event.target.checked)}
+              />
+              <span className={styles.checkboxText}>
+                <span>{t('providersPage.form.commandCodeSharedScheduling')}</span>
+                <small>{t('providersPage.form.commandCodeSharedSchedulingHint')}</small>
+              </span>
+            </label>
+            <label className={styles.checkboxRow}>
+              <input
+                type="checkbox"
+                className={styles.checkboxBox}
+                checked={form.disableCooling === true}
+                disabled={mutating}
+                onChange={(event) => updateField('disableCooling', event.target.checked)}
+              />
+              <span className={styles.checkboxText}>
+                <span>{t('providersPage.form.disableCooling')}</span>
+                <small>{t('providersPage.form.disableCoolingHint')}</small>
+              </span>
+            </label>
+          </>
         ) : null}
       </div>
+
+      <ProviderBehaviorEditor
+        brand={brand}
+        value={form}
+        onChange={(patch) => setForm((current) => ({ ...current, ...patch }))}
+        disabled={mutating}
+      />
+      {brand !== 'commandcode' ? (
+        <RuntimePolicyEditor
+          value={form.runtimePolicy ?? readRuntimePolicy()}
+          onChange={(value) => updateField('runtimePolicy', value)}
+          disabled={mutating}
+          supportsErrors={descriptor.supportsRequestScopedErrors}
+        />
+      ) : null}
 
       {/* 高级折叠区 */}
       {descriptor.supportsApiKeyEntries && form.apiKeyEntries ? (
@@ -1069,30 +975,6 @@ export function BaseProviderForm({
         </Collapsible>
       ) : null}
 
-      {brand !== 'commandcode' ? (
-        <Collapsible
-          label={t('providersPage.form.requestScopedErrorsSection')}
-          hint={`${form.requestScopedErrors?.length ?? 0}`}
-        >
-          <div className={styles.section}>
-            <p className={styles.sectionDesc}>
-              {t('providersPage.form.requestScopedErrorsHint')}
-            </p>
-            <RequestScopedErrorsEditor
-              rules={form.requestScopedErrors ?? []}
-              disabled={mutating}
-              onChange={(requestScopedErrors) =>
-                setForm((prev) => ({
-                  ...prev,
-                  requestScopedErrors,
-                  requestScopedErrorsTouched: true,
-                }))
-              }
-            />
-          </div>
-        </Collapsible>
-      ) : null}
-
       {descriptor.supportsModels ? (
         <Collapsible
           label={t('providersPage.form.modelsSection')}
@@ -1128,10 +1010,9 @@ export function BaseProviderForm({
               />
             ) : null}
             <ModelEntriesEditor
+              providerBrand={brand}
               models={modelsList}
               supportsImage={supportsModelImage}
-              supportsMaxContextLength
-              supportsInputModalities={brand === 'openaiCompatibility'}
               supportsThinking
               mutating={mutating}
               removeDisabled={modelsList.length <= 1}

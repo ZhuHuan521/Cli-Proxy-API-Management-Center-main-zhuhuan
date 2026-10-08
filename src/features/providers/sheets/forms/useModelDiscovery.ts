@@ -22,6 +22,7 @@ export const isModelDiscoveryBrand = (brand: ProviderBrand): boolean =>
 export interface UseModelDiscoveryArgs {
   brand: ProviderBrand;
   baseUrl: string;
+  proxyUrl?: string;
   formHeaders: Array<{ key: string; value: string }>;
   apiKeyEntries?: ApiKeyEntryInput[];
   apiKey?: string;
@@ -44,6 +45,7 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
   const {
     brand,
     baseUrl,
+    proxyUrl,
     formHeaders,
     apiKeyEntries,
     apiKey,
@@ -72,7 +74,8 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
           baseUrl,
           key,
           baseHeaders,
-          resolvedAuthIndex
+          resolvedAuthIndex,
+          proxyUrl
         );
       } else if (brand === 'codex' || brand === 'meta' || brand === 'xai') {
         const key = (apiKey ?? '').trim() || (fallbackApiKey ?? '').trim();
@@ -80,26 +83,8 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
           baseUrl,
           key,
           baseHeaders,
-          resolvedAuthIndex
-        );
-      } else if (brand === 'commandcode') {
-        const hasKeyPool = (apiKeyEntries ?? []).length > 0;
-        const firstEntry = (apiKeyEntries ?? []).find(
-          (entry) =>
-            entry.disabled !== true &&
-            ((entry.apiKey ?? '').trim() || (entry.existingApiKey ?? '').trim())
-        );
-        const key =
-          (firstEntry?.apiKey ?? '').trim() ||
-          (firstEntry?.existingApiKey ?? '').trim() ||
-          (apiKey ?? '').trim() ||
-          (hasKeyPool ? '' : (fallbackApiKey ?? '').trim());
-        next = await modelsApi.fetchCommandCodeModelsViaApiCall(
-          baseUrl,
-          key,
-          baseHeaders,
           resolvedAuthIndex,
-          protocolVersion
+          proxyUrl
         );
       } else if (brand === 'claude') {
         const key = (apiKey ?? '').trim() || (fallbackApiKey ?? '').trim();
@@ -107,7 +92,25 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
           baseUrl,
           key,
           baseHeaders,
-          resolvedAuthIndex
+          resolvedAuthIndex,
+          proxyUrl
+        );
+      } else if (brand === 'commandcode') {
+        const firstEntry = (apiKeyEntries ?? []).find(
+          (entry) => (entry.apiKey ?? '').trim() || (entry.existingApiKey ?? '').trim()
+        );
+        const entryKey =
+          (firstEntry?.apiKey ?? '').trim() ||
+          (firstEntry?.existingApiKey ?? '').trim() ||
+          (apiKey ?? '').trim() ||
+          (fallbackApiKey ?? '').trim();
+        next = await modelsApi.fetchCommandCodeModelsViaApiCall(
+          baseUrl,
+          entryKey,
+          baseHeaders,
+          resolvedAuthIndex,
+          protocolVersion,
+          firstEntry?.proxyUrl || proxyUrl
         );
       } else if (brand === 'openaiCompatibility') {
         const firstEntry = (apiKeyEntries ?? []).find(
@@ -122,14 +125,21 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
             baseUrl,
             entryKey,
             baseHeaders,
-            entryAuthIndex
+            entryAuthIndex,
+            firstEntry?.proxyUrl
           );
         } catch (firstErr) {
           // Some OpenAI-compatible endpoints expose /models without auth, or
           // reject the configured key for the discovery route. Retry once
           // without any auth/headers before surfacing the original error.
           try {
-            next = await modelsApi.fetchModelsViaApiCall(baseUrl);
+            next = await modelsApi.fetchModelsViaApiCall(
+              baseUrl,
+              undefined,
+              undefined,
+              undefined,
+              firstEntry?.proxyUrl
+            );
           } catch {
             throw firstErr;
           }
@@ -154,6 +164,7 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
     fallbackApiKey,
     formHeaders,
     protocolVersion,
+    proxyUrl,
   ]);
 
   const reset = useCallback(() => {
@@ -166,10 +177,14 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
   const inputSignature = useMemo(() => {
     const headerSig = formHeaders.map((h) => `${h.key}:${h.value}`).join('|');
     const entriesSig = (apiKeyEntries ?? [])
-      .map((e) => `${e.apiKey ?? ''}::${e.existingApiKey ?? ''}::${e.authIndex ?? ''}`)
+      .map(
+        (e) =>
+          `${e.apiKey ?? ''}::${e.existingApiKey ?? ''}::${e.authIndex ?? ''}::${e.proxyUrl ?? ''}`
+      )
       .join('|');
     return [
       baseUrl,
+      proxyUrl ?? '',
       apiKey ?? '',
       fallbackApiKey ?? '',
       authIndex ?? '',
@@ -177,7 +192,16 @@ export function useModelDiscovery(args: UseModelDiscoveryArgs): UseModelDiscover
       headerSig,
       entriesSig,
     ].join('||');
-  }, [apiKey, apiKeyEntries, authIndex, baseUrl, fallbackApiKey, formHeaders, protocolVersion]);
+  }, [
+    apiKey,
+    apiKeyEntries,
+    authIndex,
+    baseUrl,
+    fallbackApiKey,
+    formHeaders,
+    protocolVersion,
+    proxyUrl,
+  ]);
 
   const lastSignatureRef = useRef(inputSignature);
   useEffect(() => {

@@ -1,22 +1,19 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IconChevronDown, IconPlus, IconX } from '@/components/ui/icons';
-import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
-import { THINKING_LEVELS, type ThinkingLevel } from '../../thinkingLevels';
-import type { ModelEntryInput } from '../../types';
+import { ModelAdvancedFields } from './ModelAdvancedFields';
+import type { ModelEntryInput, ProviderBrand } from '../../types';
 import styles from './sharedForm.module.scss';
 
 const COLLAPSED_LIMIT = 10;
-const INPUT_MODALITY_OPTIONS = ['text', 'image'] as const;
 
 interface ModelEntriesEditorProps {
   models: ModelEntryInput[];
+  /** Restrict advanced controls to the OAuthModelAlias contract. */
+  oauthAliasOnly?: boolean;
+  providerBrand?: ProviderBrand;
   /** Only OpenAI-compatible entries can expose the image-generation capability. */
   supportsImage: boolean;
-  /** Every backend provider model can override the Codex context window metadata. */
-  supportsMaxContextLength: boolean;
-  /** Only OpenAI-compatible entries can expose multimodal input declarations. */
-  supportsInputModalities: boolean;
   /** Every backend provider model can override its thinking capability. */
   supportsThinking: boolean;
   mutating: boolean;
@@ -28,9 +25,9 @@ interface ModelEntriesEditorProps {
 
 export function ModelEntriesEditor({
   models,
+  oauthAliasOnly = false,
+  providerBrand = 'gemini',
   supportsImage,
-  supportsMaxContextLength,
-  supportsInputModalities,
   supportsThinking,
   mutating,
   removeDisabled,
@@ -63,87 +60,70 @@ export function ModelEntriesEditor({
   return (
     <>
       {visible.map((entry, idx) => {
-        const hasExtendedOptions =
-          supportsImage || supportsMaxContextLength || supportsInputModalities || supportsThinking;
-        const expanded = hasExtendedOptions && expandedIdx === idx;
-        const thinkingLevels = entry.thinkingLevels ?? [];
-        const inputModalities = entry.inputModalities ?? [];
-        const hasThinking = entry.thinkingLevelsTouched
-          ? thinkingLevels.length > 0
-          : (entry.thinkingJson ?? '').trim().length > 0;
-        const toggleThinkingLevel = (level: ThinkingLevel) => {
-          const nextLevels = thinkingLevels.includes(level)
-            ? thinkingLevels.filter((item) => item !== level)
-            : THINKING_LEVELS.filter((item) => item === level || thinkingLevels.includes(item));
-          onUpdate(idx, { thinkingLevels: nextLevels, thinkingLevelsTouched: true });
-        };
-        const toggleInputModality = (option: (typeof INPUT_MODALITY_OPTIONS)[number]) => {
-          const nextModalities = inputModalities.includes(option)
-            ? inputModalities.filter((item) => item !== option)
-            : [...inputModalities, option];
-          onUpdate(idx, { inputModalities: nextModalities });
-        };
+        const expanded = expandedIdx === idx;
+        const hasThinking = entry.thinkingEnabled ?? Boolean(entry.thinkingJson?.trim());
         return (
           <div key={idx} className={styles.modelEntry}>
             <div className={styles.modelAliasRow}>
               <input
                 className={styles.input}
-                placeholder="model-name"
+                placeholder={t('providersPage.modelOptions.modelName')}
+                aria-label={t('providersPage.modelOptions.modelName')}
                 value={entry.name}
                 onChange={(e) => onUpdate(idx, { name: e.target.value })}
                 disabled={mutating}
               />
               <input
                 className={styles.input}
-                placeholder="alias (optional)"
+                placeholder={t(
+                  oauthAliasOnly
+                    ? 'auth_files.policy_alias_name'
+                    : 'providersPage.modelOptions.modelAlias'
+                )}
+                aria-label={t(
+                  oauthAliasOnly
+                    ? 'auth_files.policy_alias_name'
+                    : 'providersPage.modelOptions.modelAlias'
+                )}
+                required={oauthAliasOnly}
                 value={entry.alias ?? ''}
                 onChange={(e) => onUpdate(idx, { alias: e.target.value })}
                 disabled={mutating}
               />
               <div className={styles.modelEntryActions}>
-                {supportsImage && !expanded && entry.image === true ? (
+                {!oauthAliasOnly && supportsImage && !expanded && entry.image === true ? (
                   <span className={styles.entryBadge}>
                     {t('providersPage.form.modelBadgeImage')}
                   </span>
                 ) : null}
-                {supportsThinking && !expanded && hasThinking ? (
+                {!oauthAliasOnly && supportsThinking && !expanded && hasThinking ? (
                   <span className={styles.entryBadge}>
                     {t('providersPage.form.modelBadgeThinking')}
                   </span>
                 ) : null}
-                {supportsMaxContextLength && !expanded && entry.maxContextLength ? (
-                  <span className={styles.entryBadge}>
-                    {t('providersPage.form.modelBadgeContext')}
-                  </span>
-                ) : null}
-                {supportsInputModalities && !expanded && inputModalities.length > 0 ? (
-                  <span className={styles.entryBadge}>
-                    {t('providersPage.form.modelBadgeModalities')}
-                  </span>
-                ) : null}
-                {hasExtendedOptions ? (
-                  <button
-                    type="button"
-                    className={styles.entryCardIconBtn}
-                    onClick={() => setExpandedIdx(expanded ? null : idx)}
-                    title={expanded ? t('common.collapse') : t('common.expand')}
-                    aria-label={expanded ? t('common.collapse') : t('common.expand')}
-                    aria-expanded={expanded}
-                  >
-                    <IconChevronDown
-                      className={[
-                        styles.entryCardChevron,
-                        expanded ? styles.entryCardChevronOpen : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ')}
-                      size={14}
-                    />
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  className={styles.entryCardIconBtn}
+                  onClick={() => setExpandedIdx(expanded ? null : idx)}
+                  title={expanded ? t('common.collapse') : t('common.expand')}
+                  aria-label={expanded ? t('common.collapse') : t('common.expand')}
+                  aria-expanded={expanded}
+                  disabled={mutating}
+                >
+                  <IconChevronDown
+                    className={[
+                      styles.entryCardChevron,
+                      expanded ? styles.entryCardChevronOpen : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    size={14}
+                  />
+                </button>
                 <button
                   type="button"
                   className={styles.removeBtn}
+                  aria-label={t('providersPage.modelOptions.removeModel')}
                   disabled={mutating || removeDisabled}
                   onClick={() => handleRemove(idx)}
                 >
@@ -153,31 +133,7 @@ export function ModelEntriesEditor({
             </div>
             {expanded ? (
               <div className={styles.modelEntryDetails}>
-                {supportsMaxContextLength ? (
-                  <div className={styles.field}>
-                    <label className={styles.label} htmlFor={`model-max-context-${idx}`}>
-                      {t('providersPage.form.modelMaxContextLength')}
-                    </label>
-                    <input
-                      id={`model-max-context-${idx}`}
-                      type="number"
-                      min={1}
-                      className={styles.input}
-                      value={entry.maxContextLength ?? ''}
-                      onChange={(e) =>
-                        onUpdate(idx, {
-                          maxContextLength:
-                            e.target.value === '' ? undefined : Number(e.target.value),
-                        })
-                      }
-                      disabled={mutating}
-                    />
-                    <small className={styles.labelHint}>
-                      {t('providersPage.form.modelMaxContextLengthHint')}
-                    </small>
-                  </div>
-                ) : null}
-                {supportsImage ? (
+                {!oauthAliasOnly && supportsImage ? (
                   <label className={styles.checkboxRow}>
                     <input
                       type="checkbox"
@@ -192,70 +148,47 @@ export function ModelEntriesEditor({
                     </span>
                   </label>
                 ) : null}
-                {supportsInputModalities ? (
-                  <fieldset className={styles.thinkingFieldset}>
-                    <legend className={styles.label}>
-                      {t('providersPage.form.modelInputModalities')}
-                    </legend>
-                    <div className={styles.thinkingLevelGrid}>
-                      {INPUT_MODALITY_OPTIONS.map((option) => (
-                        <SelectionCheckbox
-                          key={option}
-                          checked={inputModalities.includes(option)}
+                {oauthAliasOnly ? (
+                  <>
+                    <div className={styles.field}>
+                      <label className={styles.label}>
+                        {t('auth_files.policy_alias_display_name')}
+                        <input
+                          className={styles.input}
+                          value={entry.displayName ?? ''}
                           disabled={mutating}
-                          onChange={() => toggleInputModality(option)}
-                          className={`${styles.thinkingLevelOption} ${
-                            inputModalities.includes(option)
-                              ? styles.thinkingLevelOptionSelected
-                              : ''
-                          }`}
-                          labelClassName={styles.thinkingLevelLabel}
-                          label={
-                            <>
-                              <span>{option}</span>
-                              <code>{option}</code>
-                            </>
-                          }
+                          onChange={(event) => onUpdate(idx, { displayName: event.target.value })}
                         />
-                      ))}
+                      </label>
                     </div>
-                    <small className={styles.labelHint}>
-                      {t('providersPage.form.modelInputModalitiesHint')}
-                    </small>
-                  </fieldset>
-                ) : null}
-                {supportsThinking ? (
-                  <fieldset className={styles.thinkingFieldset}>
-                    <legend className={styles.label}>
-                      {t('providersPage.form.thinkingConfig')}
-                    </legend>
-                    <div className={styles.thinkingLevelGrid}>
-                      {THINKING_LEVELS.map((level) => (
-                        <SelectionCheckbox
-                          key={level}
-                          checked={thinkingLevels.includes(level)}
+                    {(['fork', 'forceMapping'] as const).map((field) => (
+                      <label key={field} className={styles.checkboxRow}>
+                        <input
+                          type="checkbox"
+                          className={styles.checkboxBox}
+                          checked={entry[field] === true}
                           disabled={mutating}
-                          onChange={() => toggleThinkingLevel(level)}
-                          className={`${styles.thinkingLevelOption} ${
-                            thinkingLevels.includes(level) ? styles.thinkingLevelOptionSelected : ''
-                          }`}
-                          labelClassName={styles.thinkingLevelLabel}
-                          label={
-                            <>
-                              <span>{t(`providersPage.form.thinkingLevels.${level}`)}</span>
-                              <code>{level}</code>
-                            </>
-                          }
+                          onChange={(event) => onUpdate(idx, { [field]: event.target.checked })}
                         />
-                      ))}
-                    </div>
-                    {(entry.thinkingJson ?? '').trim() && !entry.thinkingLevelsTouched ? (
-                      <p className={styles.thinkingExistingHint}>
-                        {t('providersPage.form.thinkingExistingHint')}
-                      </p>
-                    ) : null}
-                  </fieldset>
-                ) : null}
+                        <span className={styles.checkboxText}>
+                          {t(
+                            field === 'fork'
+                              ? 'auth_files.policy_alias_fork'
+                              : 'auth_files.policy_alias_force_mapping'
+                          )}
+                        </span>
+                      </label>
+                    ))}
+                  </>
+                ) : (
+                  <ModelAdvancedFields
+                    entry={entry}
+                    providerBrand={providerBrand}
+                    disabled={mutating}
+                    supportsThinking={supportsThinking}
+                    onUpdate={(patch) => onUpdate(idx, patch)}
+                  />
+                )}
               </div>
             ) : null}
           </div>

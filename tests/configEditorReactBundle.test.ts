@@ -9,16 +9,40 @@ const resolvedEntryId = `\0${entryId}`;
 const entrySource = `
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { EditorState, getDefaultExtensions } from '@uiw/react-codemirror';
+import { yaml } from '@codemirror/lang-yaml';
+import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { keymap } from '@codemirror/view';
 import ConfigSourceEditor from '@/features/config/components/ConfigSourceEditor';
+
+const document = 'config-version: 8\\nserver:\\n  port: 8317\\n';
 
 export function renderConfigEditor() {
   return renderToStaticMarkup(createElement(ConfigSourceEditor, {
-    value: 'config-version: 8\\nserver:\\n  port: 8317\\n',
+    value: document,
     onChange() {},
     theme: 'light',
     editable: true,
     placeholder: 'YAML configuration',
   }));
+}
+
+export function createConfigEditorState() {
+  const state = EditorState.create({
+    doc: document,
+    extensions: [
+      ...getDefaultExtensions({
+        theme: 'light',
+        editable: true,
+        placeholder: 'YAML configuration',
+      }),
+      yaml(),
+      search(),
+      highlightSelectionMatches(),
+      keymap.of(searchKeymap),
+    ],
+  });
+  return state.doc.toString();
 }
 `;
 
@@ -64,10 +88,22 @@ test('production config editor uses the application React dispatcher', async () 
     )();
     expect(markup).toContain('cm-theme-light');
 
+    const document = new Function(
+      `${chunks[0].code}\nreturn ConfigEditorReactRegression.createConfigEditorState();`
+    )();
+    expect(document).toBe('config-version: 8\nserver:\n  port: 8317\n');
+
     const reactEntries = chunks[0].moduleIds.filter((id) =>
       id.replaceAll('\\', '/').endsWith('/react/index.js')
     );
     expect(reactEntries).toHaveLength(1);
+
+    for (const name of ['state', 'view', 'language']) {
+      const entryPaths = chunks[0].moduleIds.filter((id) =>
+        id.replaceAll('\\', '/').endsWith(`/@codemirror/${name}/dist/index.js`)
+      );
+      expect(entryPaths).toHaveLength(1);
+    }
   } finally {
     if (previousVersion === undefined) delete process.env.VERSION;
     else process.env.VERSION = previousVersion;

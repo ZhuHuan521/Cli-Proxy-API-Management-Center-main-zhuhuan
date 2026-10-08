@@ -47,8 +47,14 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(getVersion())
   },
   resolve: {
-    // The lazy CodeMirror bundle must share React's hook dispatcher with the app.
-    dedupe: ['react', 'react-dom'],
+    // The lazy editor must share React's dispatcher and CodeMirror's identity-based core types.
+    dedupe: [
+      'react',
+      'react-dom',
+      '@codemirror/state',
+      '@codemirror/view',
+      '@codemirror/language',
+    ],
     alias: {
       '@': path.resolve(__dirname, './src')
     }

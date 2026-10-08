@@ -28,6 +28,19 @@ export interface CloakConfig {
   cacheUserId?: boolean;
 }
 
+export type RequestScopedErrorAction =
+  | 'stop'
+  | 'stop-and-cooldown'
+  | 'continue'
+  | 'continue-and-cooldown';
+
+export interface RequestScopedErrorRule {
+  status?: number;
+  match?: string[];
+  matchRegexr?: string[];
+  action?: RequestScopedErrorAction;
+}
+
 export interface GeminiKeyConfig {
   apiKey: string;
   priority?: number;
@@ -39,6 +52,8 @@ export interface GeminiKeyConfig {
   headers?: Record<string, string>;
   excludedModels?: string[];
   disableCooling?: boolean;
+  requestRetry?: number;
+  requestScopedErrors?: RequestScopedErrorRule[];
   authIndex?: string;
 }
 
@@ -55,6 +70,8 @@ export interface ProviderKeyConfig {
   models?: ModelAlias[];
   excludedModels?: string[];
   disableCooling?: boolean;
+  requestRetry?: number;
+  requestScopedErrors?: RequestScopedErrorRule[];
   cloak?: CloakConfig;
   fingerprintProfile?: string;
   authIndex?: string;
@@ -71,6 +88,8 @@ export interface OpenAIProviderConfig {
   priority?: number;
   testModel?: string;
   disableCooling?: boolean;
+  requestRetry?: number;
+  requestScopedErrors?: RequestScopedErrorRule[];
   authIndex?: string;
   /** Original index in the backend openai-compatibility array. */
   sourceIndex?: number;

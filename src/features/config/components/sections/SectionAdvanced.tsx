@@ -233,6 +233,28 @@ export function SectionAdvanced({ values, disabled, animateIn, onChange }: Confi
                   onChange={(codexIdentityConfuse) => onChange({ codexIdentityConfuse })}
                 />
               </FieldAnchor>
+              <FieldAnchor fieldId="codexResponseSteering">
+                <ToggleRow
+                  title={t('config_management.visual.sections.system.codex_response_steering')}
+                  description={t(
+                    'config_management.visual.sections.system.codex_response_steering_desc'
+                  )}
+                  checked={values.codexResponseSteering}
+                  disabled={disabled}
+                  onChange={(codexResponseSteering) => onChange({ codexResponseSteering })}
+                />
+              </FieldAnchor>
+              <FieldAnchor fieldId="codexDisableCloaking">
+                <ToggleRow
+                  title={t('config_management.visual.sections.system.codex_disable_cloaking')}
+                  description={t(
+                    'config_management.visual.sections.system.codex_disable_cloaking_desc'
+                  )}
+                  checked={values.codexDisableCloaking}
+                  disabled={disabled}
+                  onChange={(codexDisableCloaking) => onChange({ codexDisableCloaking })}
+                />
+              </FieldAnchor>
               <FieldAnchor fieldId="codexStreamBootstrapBuffering">
                 <ToggleRow
                   title={t(
@@ -245,6 +267,46 @@ export function SectionAdvanced({ values, disabled, animateIn, onChange }: Confi
                   disabled={disabled}
                   onChange={(codexStreamBootstrapBuffering) =>
                     onChange({ codexStreamBootstrapBuffering })
+                  }
+                />
+              </FieldAnchor>
+              <FieldAnchor fieldId="codexStreamBootstrapTimeout">
+                <Input
+                  label={t('config_management.visual.sections.system.codex_stream_bootstrap_timeout')}
+                  hint={t(
+                    'config_management.visual.sections.system.codex_stream_bootstrap_timeout_desc'
+                  )}
+                  placeholder="20s"
+                  value={values.codexStreamBootstrapTimeout}
+                  onChange={(e) => onChange({ codexStreamBootstrapTimeout: e.target.value })}
+                  disabled={disabled}
+                />
+              </FieldAnchor>
+              <FieldAnchor fieldId="codexOptimizeMultiAgentV2">
+                <ToggleRow
+                  title={t('config_management.visual.sections.system.codex_optimize_multi_agent_v2')}
+                  description={t(
+                    'config_management.visual.sections.system.codex_optimize_multi_agent_v2_desc'
+                  )}
+                  checked={values.codexOptimizeMultiAgentV2}
+                  disabled={disabled}
+                  onChange={(codexOptimizeMultiAgentV2) =>
+                    onChange({ codexOptimizeMultiAgentV2 })
+                  }
+                />
+              </FieldAnchor>
+              <FieldAnchor fieldId="codexOrphanDelegationCompatibility">
+                <ToggleRow
+                  title={t(
+                    'config_management.visual.sections.system.codex_orphan_delegation_compatibility'
+                  )}
+                  description={t(
+                    'config_management.visual.sections.system.codex_orphan_delegation_compatibility_desc'
+                  )}
+                  checked={values.codexOrphanDelegationCompatibility}
+                  disabled={disabled}
+                  onChange={(codexOrphanDelegationCompatibility) =>
+                    onChange({ codexOrphanDelegationCompatibility })
                   }
                 />
               </FieldAnchor>

@@ -38,6 +38,7 @@ import { ModelDiscoveryPanel } from './ModelDiscoveryPanel';
 import { ConnectivityStatusIcon } from './ConnectivityStatusIcon';
 import { ApiKeyEntriesEditor } from './ApiKeyEntriesEditor';
 import { ModelEntriesEditor } from './ModelEntriesEditor';
+import { RequestScopedErrorsEditor } from './RequestScopedErrorsEditor';
 import styles from './sharedForm.module.scss';
 import { MAX_CREDENTIAL_WEIGHT } from '@/utils/credentialWeight';
 
@@ -130,6 +131,10 @@ function buildInitialForm(
       disabled: mode === 'create' ? false : cfg.enabled !== true,
       sharedScheduling: cfg.shared_scheduling !== false,
       disableCooling: cfg.disable_cooling === true,
+      requestRetry: undefined,
+      requestRetryTouched: false,
+      requestScopedErrors: [],
+      requestScopedErrorsTouched: false,
       priority: cfg.priority,
       weight: undefined,
       models: cfg.models?.length
@@ -162,6 +167,10 @@ function buildInitialForm(
       prefix: '',
       disabled: false,
       disableCooling: false,
+      requestRetry: undefined,
+      requestRetryTouched: false,
+      requestScopedErrors: [],
+      requestScopedErrorsTouched: false,
       priority: undefined,
       weight: undefined,
       models: [emptyModel()],
@@ -198,6 +207,10 @@ function buildInitialForm(
       prefix: cfg.prefix ?? '',
       disabled: cfg.disabled === true,
       disableCooling: cfg.disableCooling === true,
+      requestRetry: cfg.requestRetry,
+      requestRetryTouched: false,
+      requestScopedErrors: cfg.requestScopedErrors ?? [],
+      requestScopedErrorsTouched: false,
       priority: cfg.priority,
       models: cfg.models?.length
         ? cfg.models.map(modelAliasToFormEntry)
@@ -234,6 +247,10 @@ function buildInitialForm(
     prefix: cfg.prefix ?? '',
     disabled,
     disableCooling: cfg.disableCooling === true,
+    requestRetry: cfg.requestRetry,
+    requestRetryTouched: false,
+    requestScopedErrors: cfg.requestScopedErrors ?? [],
+    requestScopedErrorsTouched: false,
     priority: cfg.priority,
     weight: cfg.weight,
     models: cfg.models?.length
@@ -495,6 +512,18 @@ export function BaseProviderForm({
     }
     if (weights.some((weight) => weight !== undefined && weight > MAX_CREDENTIAL_WEIGHT)) {
       return t('providersPage.form.validation.weightMax', { max: MAX_CREDENTIAL_WEIGHT });
+    }
+    if (form.requestRetry !== undefined && !Number.isSafeInteger(form.requestRetry)) {
+      return t('providersPage.form.validation.requestRetryInteger');
+    }
+    if (
+      (form.requestScopedErrors ?? []).some(
+        (rule) =>
+          rule.status !== undefined &&
+          (!Number.isSafeInteger(rule.status) || rule.status < 100 || rule.status > 599)
+      )
+    ) {
+      return t('providersPage.form.validation.requestScopedStatus');
     }
     if (
       brand === 'commandcode' &&
@@ -776,6 +805,30 @@ export function BaseProviderForm({
           </div>
         ) : null}
 
+        {brand !== 'commandcode' ? (
+          <div className={styles.field}>
+            <label className={styles.label} htmlFor={`${fid}-requestRetry`}>
+              {t('providersPage.form.requestRetry')}
+            </label>
+            <input
+              id={`${fid}-requestRetry`}
+              type="number"
+              className={styles.input}
+              value={form.requestRetry ?? ''}
+              placeholder={t('providersPage.form.requestRetryInherit')}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  requestRetry: e.target.value === '' ? undefined : Number(e.target.value),
+                  requestRetryTouched: true,
+                }))
+              }
+              disabled={mutating}
+            />
+            <span className={styles.labelHint}>{t('providersPage.form.requestRetryHint')}</span>
+          </div>
+        ) : null}
+
         {descriptor.supportsTestModel ? (
           <div className={styles.field}>
             <label className={styles.label} htmlFor={`${fid}-testModel`}>
@@ -1012,6 +1065,30 @@ export function BaseProviderForm({
               <IconPlus size={12} />
               <span>{t('providersPage.form.addHeader')}</span>
             </button>
+          </div>
+        </Collapsible>
+      ) : null}
+
+      {brand !== 'commandcode' ? (
+        <Collapsible
+          label={t('providersPage.form.requestScopedErrorsSection')}
+          hint={`${form.requestScopedErrors?.length ?? 0}`}
+        >
+          <div className={styles.section}>
+            <p className={styles.sectionDesc}>
+              {t('providersPage.form.requestScopedErrorsHint')}
+            </p>
+            <RequestScopedErrorsEditor
+              rules={form.requestScopedErrors ?? []}
+              disabled={mutating}
+              onChange={(requestScopedErrors) =>
+                setForm((prev) => ({
+                  ...prev,
+                  requestScopedErrors,
+                  requestScopedErrorsTouched: true,
+                }))
+              }
+            />
           </div>
         </Collapsible>
       ) : null}

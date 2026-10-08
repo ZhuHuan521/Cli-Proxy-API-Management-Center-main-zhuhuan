@@ -47,6 +47,9 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(getVersion())
   },
   resolve: {
+    // CodeMirror extensions use instanceof checks across these shared modules.
+    // Resolve nested dependency copies to one instance in dev and production.
+    dedupe: ['@codemirror/state', '@codemirror/view', '@codemirror/language'],
     alias: {
       '@': path.resolve(__dirname, './src')
     }

@@ -29,6 +29,8 @@ const PROVIDER_COMMON_KEY_FIELDS = [
   'models',
   'excluded-models',
   'disable-cooling',
+  'request-retry',
+  'request-scoped-errors',
 ] as const;
 
 const GEMINI_KEY_FIELDS = PROVIDER_COMMON_KEY_FIELDS;
@@ -57,6 +59,8 @@ const VERTEX_KEY_FIELDS = [
   'headers',
   'models',
   'excluded-models',
+  'request-retry',
+  'request-scoped-errors',
 ] as const;
 
 const OPENAI_PROVIDER_FIELDS = [
@@ -70,6 +74,8 @@ const OPENAI_PROVIDER_FIELDS = [
   'models',
   'test-model',
   'disable-cooling',
+  'request-retry',
+  'request-scoped-errors',
 ] as const;
 
 const MODEL_ALIAS_FIELDS = [
@@ -131,6 +137,22 @@ const mergeKnownFields = (
     }
   });
   return next;
+};
+
+const preserveOmittedRequestPolicyOverrides = (
+  raw: unknown,
+  payload: Record<string, unknown>,
+  next: Record<string, unknown>
+): void => {
+  if (!isRecord(raw)) return;
+  (['request-retry', 'request-scoped-errors'] as const).forEach((key) => {
+    if (
+      Object.prototype.hasOwnProperty.call(raw, key) &&
+      !Object.prototype.hasOwnProperty.call(payload, key)
+    ) {
+      next[key] = raw[key];
+    }
+  });
 };
 
 const findRawRecord = (
@@ -263,6 +285,7 @@ const mergeProviderKeyPayload = (
   knownFields: readonly string[]
 ) => {
   const next = mergeKnownFields(raw, payload, knownFields);
+  preserveOmittedRequestPolicyOverrides(raw, payload, next);
   const models = mergeModelPayloads(raw, payload.models);
   if (models) next.models = models;
   if (isRecord(payload.cloak)) {
@@ -277,6 +300,7 @@ const mergeProviderKeyPayload = (
 
 const mergeOpenAIProviderPayload = (raw: unknown, payload: Record<string, unknown>) => {
   const next = mergeKnownFields(raw, payload, OPENAI_PROVIDER_FIELDS);
+  preserveOmittedRequestPolicyOverrides(raw, payload, next);
   const rawApiKeyEntries = isRecord(raw) ? raw['api-key-entries'] : undefined;
   const apiKeyEntries = payload['api-key-entries'];
   if (Array.isArray(apiKeyEntries)) {
@@ -344,6 +368,16 @@ const serializeApiKeyEntry = (entry: ApiKeyEntry) => {
   return payload;
 };
 
+const serializeRequestScopedErrors = (rules: ProviderKeyConfig['requestScopedErrors']) =>
+  Array.isArray(rules)
+    ? rules.map((rule) => ({
+        ...(rule.status !== undefined ? { status: rule.status } : {}),
+        ...(rule.match?.length ? { match: rule.match } : {}),
+        ...(rule.matchRegexr?.length ? { 'match-regexr': rule.matchRegexr } : {}),
+        ...(rule.action ? { action: rule.action } : {}),
+      }))
+    : undefined;
+
 const serializeProviderKey = (config: ProviderKeyConfig) => {
   const payload: Record<string, unknown> = { 'api-key': config.apiKey };
   if (config.priority !== undefined) payload.priority = config.priority;
@@ -354,6 +388,9 @@ const serializeProviderKey = (config: ProviderKeyConfig) => {
   if (config.alphaSearch !== undefined) payload['alpha-search'] = config.alphaSearch;
   if (config.proxyUrl) payload['proxy-url'] = config.proxyUrl;
   if (config.disableCooling) payload['disable-cooling'] = true;
+  if (config.requestRetry !== undefined) payload['request-retry'] = config.requestRetry;
+  const requestScopedErrors = serializeRequestScopedErrors(config.requestScopedErrors);
+  if (requestScopedErrors !== undefined) payload['request-scoped-errors'] = requestScopedErrors;
   const headers = serializeHeaders(config.headers);
   if (headers) payload.headers = headers;
   const models = serializeModelAliases(config.models);
@@ -409,6 +446,9 @@ const serializeVertexKey = (config: ProviderKeyConfig) => {
   if (config.prefix?.trim()) payload.prefix = config.prefix.trim();
   if (config.baseUrl) payload['base-url'] = config.baseUrl;
   if (config.proxyUrl) payload['proxy-url'] = config.proxyUrl;
+  if (config.requestRetry !== undefined) payload['request-retry'] = config.requestRetry;
+  const requestScopedErrors = serializeRequestScopedErrors(config.requestScopedErrors);
+  if (requestScopedErrors !== undefined) payload['request-scoped-errors'] = requestScopedErrors;
   const headers = serializeHeaders(config.headers);
   if (headers) payload.headers = headers;
   const models = serializeVertexModelAliases(config.models);
@@ -427,6 +467,9 @@ const serializeGeminiKey = (config: GeminiKeyConfig) => {
   if (config.baseUrl) payload['base-url'] = config.baseUrl;
   if (config.proxyUrl) payload['proxy-url'] = config.proxyUrl;
   if (config.disableCooling) payload['disable-cooling'] = true;
+  if (config.requestRetry !== undefined) payload['request-retry'] = config.requestRetry;
+  const requestScopedErrors = serializeRequestScopedErrors(config.requestScopedErrors);
+  if (requestScopedErrors !== undefined) payload['request-scoped-errors'] = requestScopedErrors;
   const headers = serializeHeaders(config.headers);
   if (headers) payload.headers = headers;
   const models = serializeModelAliases(config.models);
@@ -454,6 +497,9 @@ const serializeOpenAIProvider = (provider: OpenAIProviderConfig) => {
   if (provider.priority !== undefined) payload.priority = provider.priority;
   if (provider.testModel) payload['test-model'] = provider.testModel;
   if (provider.disableCooling) payload['disable-cooling'] = true;
+  if (provider.requestRetry !== undefined) payload['request-retry'] = provider.requestRetry;
+  const requestScopedErrors = serializeRequestScopedErrors(provider.requestScopedErrors);
+  if (requestScopedErrors !== undefined) payload['request-scoped-errors'] = requestScopedErrors;
   return payload;
 };
 

@@ -378,6 +378,10 @@ const buildProviderKeyConfig = (
     headers: Object.keys(headers).length ? headers : undefined,
     excludedModels: excluded,
     disableCooling: input.disableCooling === true,
+    requestRetry: input.requestRetryTouched ? (input.requestRetry ?? -1) : existing?.requestRetry,
+    requestScopedErrors: input.requestScopedErrorsTouched
+      ? (input.requestScopedErrors ?? [])
+      : existing?.requestScopedErrors,
     authIndex: existing?.authIndex,
   };
   if ((brand === 'codex' || brand === 'xai') && input.websockets !== undefined) {
@@ -428,6 +432,10 @@ const buildOpenAIConfig = (
     apiKeyEntries,
     disabled: input.disabled,
     disableCooling: input.disableCooling === true,
+    requestRetry: input.requestRetryTouched ? (input.requestRetry ?? -1) : existing?.requestRetry,
+    requestScopedErrors: input.requestScopedErrorsTouched
+      ? (input.requestScopedErrors ?? [])
+      : existing?.requestScopedErrors,
     headers: Object.keys(headers).length ? headers : undefined,
     models: models.length ? models : undefined,
     priority: input.priority,

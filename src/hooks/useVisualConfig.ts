@@ -17,6 +17,11 @@ import type {
   PayloadParamValidationErrorCode,
 } from '@/types/visualConfig';
 import { DEFAULT_VISUAL_VALUES } from '@/types/visualConfig';
+import {
+  isVisualConfigV8,
+  migrateVisualDirtyFieldsToV8,
+  projectV8ConfigForVisual,
+} from '@/features/config/visualConfigPaths';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -1114,7 +1119,12 @@ function getNextDirtyFields(
       'maxRetryInterval',
       'transientErrorCooldownSeconds',
       'codexIdentityConfuse',
+      'codexResponseSteering',
+      'codexDisableCloaking',
       'codexStreamBootstrapBuffering',
+      'codexStreamBootstrapTimeout',
+      'codexOptimizeMultiAgentV2',
+      'codexOrphanDelegationCompatibility',
       'wsAuth',
       'quotaSwitchProject',
       'quotaSwitchPreviewModel',
@@ -1283,7 +1293,7 @@ export function useVisualConfig() {
       }
 
       const parsedRaw: unknown = parseYaml(yamlContent) || {};
-      const parsed = asRecord(parsedRaw) ?? {};
+      const parsed = projectV8ConfigForVisual(asRecord(parsedRaw) ?? {});
       const tls = asRecord(parsed.tls);
       const remoteManagement = asRecord(parsed['remote-management']);
       const quotaExceeded = asRecord(parsed['quota-exceeded']);
@@ -1386,7 +1396,14 @@ export function useVisualConfig() {
             ? codexHeaderDefaults['beta-features']
             : '',
         codexIdentityConfuse: Boolean(codex?.['identity-confuse']),
+        codexResponseSteering: Boolean(codex?.['response-steering']),
+        codexDisableCloaking: Boolean(codex?.['disable-codex-cloaking']),
         codexStreamBootstrapBuffering: Boolean(codex?.['stream-bootstrap-buffering']),
+        codexStreamBootstrapTimeout: String(codex?.['stream-bootstrap-timeout'] ?? ''),
+        codexOptimizeMultiAgentV2: Boolean(codex?.['optimize-multi-agent-v2']),
+        codexOrphanDelegationCompatibility: Boolean(
+          codex?.['orphan-delegation-compatibility']
+        ),
 
         quotaSwitchProject: Boolean(
           quotaExceeded?.['switch-project'] ?? DEFAULT_VISUAL_VALUES.quotaSwitchProject
@@ -1441,6 +1458,9 @@ export function useVisualConfig() {
         }
         const values = visualValues;
         const shouldWritePluginStoreAuth = dirtyFields.has('pluginStoreAuth');
+        const v8 = isVisualConfigV8(
+          asRecord(doc.toJSON()) ?? { 'config-version': doc.getIn(['config-version']) }
+        );
 
         if (dirtyFields.has('host')) setStringInDoc(doc, ['host'], values.host);
         if (dirtyFields.has('port')) setIntFromStringInDoc(doc, ['port'], values.port);
@@ -1504,12 +1524,13 @@ export function useVisualConfig() {
             .split('\n')
             .map((key) => key.trim())
             .filter(Boolean);
+          const apiKeysPath = v8 ? ['access', 'api-keys'] : ['api-keys'];
           if (apiKeys.length > 0) {
-            doc.setIn(['api-keys'], apiKeys);
-          } else if (docHas(doc, ['api-keys'])) {
-            doc.deleteIn(['api-keys']);
+            doc.setIn(apiKeysPath, apiKeys);
+          } else if (docHas(doc, apiKeysPath)) {
+            doc.deleteIn(apiKeysPath);
           }
-          deleteLegacyApiKeysProvider(doc);
+          if (!v8) deleteLegacyApiKeysProvider(doc);
         }
 
         const pluginsDirty =
@@ -1643,17 +1664,53 @@ export function useVisualConfig() {
 
         const codexDirty =
           dirtyFields.has('codexIdentityConfuse') ||
-          dirtyFields.has('codexStreamBootstrapBuffering');
+          dirtyFields.has('codexResponseSteering') ||
+          dirtyFields.has('codexDisableCloaking') ||
+          dirtyFields.has('codexStreamBootstrapBuffering') ||
+          dirtyFields.has('codexStreamBootstrapTimeout') ||
+          dirtyFields.has('codexOptimizeMultiAgentV2') ||
+          dirtyFields.has('codexOrphanDelegationCompatibility');
         if (codexDirty) {
           ensureMapInDoc(doc, ['codex']);
           if (dirtyFields.has('codexIdentityConfuse')) {
             setBooleanInDoc(doc, ['codex', 'identity-confuse'], values.codexIdentityConfuse);
+          }
+          if (dirtyFields.has('codexResponseSteering')) {
+            setBooleanInDoc(doc, ['codex', 'response-steering'], values.codexResponseSteering);
+          }
+          if (dirtyFields.has('codexDisableCloaking')) {
+            setBooleanInDoc(
+              doc,
+              ['codex', 'disable-codex-cloaking'],
+              values.codexDisableCloaking
+            );
           }
           if (dirtyFields.has('codexStreamBootstrapBuffering')) {
             setBooleanInDoc(
               doc,
               ['codex', 'stream-bootstrap-buffering'],
               values.codexStreamBootstrapBuffering
+            );
+          }
+          if (dirtyFields.has('codexStreamBootstrapTimeout')) {
+            setStringInDoc(
+              doc,
+              ['codex', 'stream-bootstrap-timeout'],
+              values.codexStreamBootstrapTimeout
+            );
+          }
+          if (dirtyFields.has('codexOptimizeMultiAgentV2')) {
+            setBooleanInDoc(
+              doc,
+              ['codex', 'optimize-multi-agent-v2'],
+              values.codexOptimizeMultiAgentV2
+            );
+          }
+          if (dirtyFields.has('codexOrphanDelegationCompatibility')) {
+            setBooleanInDoc(
+              doc,
+              ['codex', 'orphan-delegation-compatibility'],
+              values.codexOrphanDelegationCompatibility
             );
           }
           deleteIfMapEmpty(doc, ['codex']);
@@ -1848,6 +1905,8 @@ export function useVisualConfig() {
           }
           deleteIfMapEmpty(doc, ['payload']);
         }
+
+        if (v8) migrateVisualDirtyFieldsToV8(doc, dirtyFields);
 
         return doc.toString({ indent: 2, lineWidth: 120, minContentWidth: 0 });
       } catch {

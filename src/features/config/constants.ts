@@ -159,7 +159,12 @@ export const FIELD_VALUE_KEYS: Record<string, readonly string[]> = {
   codexHeaderUserAgent: ['codexHeaderUserAgent'],
   codexHeaderBetaFeatures: ['codexHeaderBetaFeatures'],
   codexIdentityConfuse: ['codexIdentityConfuse'],
+  codexResponseSteering: ['codexResponseSteering'],
+  codexDisableCloaking: ['codexDisableCloaking'],
   codexStreamBootstrapBuffering: ['codexStreamBootstrapBuffering'],
+  codexStreamBootstrapTimeout: ['codexStreamBootstrapTimeout'],
+  codexOptimizeMultiAgentV2: ['codexOptimizeMultiAgentV2'],
+  codexOrphanDelegationCompatibility: ['codexOrphanDelegationCompatibility'],
   // ── payload ───────────────────────────────────────────────────────────────
   payloadDefaultRules: ['payloadDefaultRules'],
   payloadDefaultRawRules: ['payloadDefaultRawRules'],

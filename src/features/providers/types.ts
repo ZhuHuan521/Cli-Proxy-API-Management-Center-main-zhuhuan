@@ -2,7 +2,12 @@
  * AI 提供商 Workbench 视图模型(归一化各 brand 的异构 config)
  */
 
-import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
+import type {
+  GeminiKeyConfig,
+  OpenAIProviderConfig,
+  ProviderKeyConfig,
+  RequestScopedErrorRule,
+} from '@/types';
 import type { ThinkingLevel } from './thinkingLevels';
 
 export type ProviderBrand =
@@ -253,6 +258,10 @@ export interface ProviderEntryFormInput {
   prefix: string;
   disabled: boolean;
   disableCooling?: boolean;
+  requestRetry?: number;
+  requestRetryTouched?: boolean;
+  requestScopedErrors?: RequestScopedErrorRule[];
+  requestScopedErrorsTouched?: boolean;
   priority?: number;
   weight?: number;
 

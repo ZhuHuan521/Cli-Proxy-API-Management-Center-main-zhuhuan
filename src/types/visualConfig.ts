@@ -138,7 +138,12 @@ export type VisualConfigValues = {
   codexHeaderUserAgent: string;
   codexHeaderBetaFeatures: string;
   codexIdentityConfuse: boolean;
+  codexResponseSteering: boolean;
+  codexDisableCloaking: boolean;
   codexStreamBootstrapBuffering: boolean;
+  codexStreamBootstrapTimeout: string;
+  codexOptimizeMultiAgentV2: boolean;
+  codexOrphanDelegationCompatibility: boolean;
   payloadDefaultRules: PayloadRule[];
   payloadDefaultRawRules: PayloadRule[];
   payloadOverrideRules: PayloadRule[];
@@ -207,7 +212,12 @@ export const DEFAULT_VISUAL_VALUES: VisualConfigValues = {
   codexHeaderUserAgent: '',
   codexHeaderBetaFeatures: '',
   codexIdentityConfuse: false,
+  codexResponseSteering: false,
+  codexDisableCloaking: false,
   codexStreamBootstrapBuffering: false,
+  codexStreamBootstrapTimeout: '',
+  codexOptimizeMultiAgentV2: false,
+  codexOrphanDelegationCompatibility: false,
   payloadDefaultRules: [],
   payloadDefaultRawRules: [],
   payloadOverrideRules: [],

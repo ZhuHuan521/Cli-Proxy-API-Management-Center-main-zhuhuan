@@ -5,6 +5,8 @@ import type {
   ModelAlias,
   OpenAIProviderConfig,
   ProviderKeyConfig,
+  RequestScopedErrorAction,
+  RequestScopedErrorRule,
 } from '@/types';
 import type { Config } from '@/types/config';
 import { buildHeaderObject } from '@/utils/headers';
@@ -123,6 +125,47 @@ const normalizeAuthIndex = (value: unknown): string | undefined => {
   return trimmed ? trimmed : undefined;
 };
 
+const normalizeOptionalInteger = (value: unknown): number | undefined => {
+  if (value === undefined || value === null || String(value).trim() === '') return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+};
+
+const normalizeRequestRetryOverride = (value: unknown): number | undefined => {
+  const parsed = normalizeOptionalInteger(value);
+  return parsed !== undefined && parsed >= 0 ? parsed : undefined;
+};
+
+const REQUEST_SCOPED_ERROR_ACTIONS = new Set<RequestScopedErrorAction>([
+  'stop',
+  'stop-and-cooldown',
+  'continue',
+  'continue-and-cooldown',
+]);
+
+const normalizeRequestScopedErrors = (value: unknown): RequestScopedErrorRule[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!isRecord(item)) return null;
+      const status = normalizeOptionalInteger(item.status);
+      const match = normalizeExcludedModels(item.match);
+      const matchRegexr = normalizeExcludedModels(item['match-regexr']);
+      const actionRaw = typeof item.action === 'string' ? item.action.trim() : '';
+      const action = REQUEST_SCOPED_ERROR_ACTIONS.has(actionRaw as RequestScopedErrorAction)
+        ? (actionRaw as RequestScopedErrorAction)
+        : undefined;
+      if (status === undefined && !match.length && !matchRegexr.length && !action) return null;
+      const rule: RequestScopedErrorRule = {};
+      if (status !== undefined) rule.status = status;
+      if (match.length) rule.match = match;
+      if (matchRegexr.length) rule.matchRegexr = matchRegexr;
+      if (action) rule.action = action;
+      return rule;
+    })
+    .filter(Boolean) as RequestScopedErrorRule[];
+};
+
 const normalizeApiKeyEntry = (entry: unknown): ApiKeyEntry | null => {
   if (entry === undefined || entry === null) return null;
   const record = isRecord(entry) ? entry : null;
@@ -172,6 +215,10 @@ const normalizeProviderKeyConfig = (item: unknown): ProviderKeyConfig | null => 
   if (proxyUrl) config.proxyUrl = String(proxyUrl);
   const disableCooling = normalizeBoolean(record?.['disable-cooling']);
   if (disableCooling !== undefined) config.disableCooling = disableCooling;
+  const requestRetry = normalizeRequestRetryOverride(record?.['request-retry']);
+  if (requestRetry !== undefined) config.requestRetry = requestRetry;
+  const requestScopedErrors = normalizeRequestScopedErrors(record?.['request-scoped-errors']);
+  if (requestScopedErrors.length) config.requestScopedErrors = requestScopedErrors;
   const headers = normalizeHeaders(record?.headers);
   if (headers) config.headers = headers;
   const models = normalizeModelAliases(record?.models);
@@ -240,6 +287,10 @@ const normalizeGeminiKeyConfig = (item: unknown): GeminiKeyConfig | null => {
   if (proxyUrl) config.proxyUrl = String(proxyUrl);
   const disableCooling = normalizeBoolean(record?.['disable-cooling']);
   if (disableCooling !== undefined) config.disableCooling = disableCooling;
+  const requestRetry = normalizeRequestRetryOverride(record?.['request-retry']);
+  if (requestRetry !== undefined) config.requestRetry = requestRetry;
+  const requestScopedErrors = normalizeRequestScopedErrors(record?.['request-scoped-errors']);
+  if (requestScopedErrors.length) config.requestScopedErrors = requestScopedErrors;
   const models = normalizeModelAliases(record?.models);
   if (models.length) config.models = models;
   const headers = normalizeHeaders(record?.headers);
@@ -281,6 +332,10 @@ const normalizeOpenAIProvider = (
   if (disabled !== undefined) result.disabled = disabled;
   const disableCooling = normalizeBoolean(provider['disable-cooling']);
   if (disableCooling !== undefined) result.disableCooling = disableCooling;
+  const requestRetry = normalizeRequestRetryOverride(provider['request-retry']);
+  if (requestRetry !== undefined) result.requestRetry = requestRetry;
+  const requestScopedErrors = normalizeRequestScopedErrors(provider['request-scoped-errors']);
+  if (requestScopedErrors.length) result.requestScopedErrors = requestScopedErrors;
   const prefix = normalizePrefix(provider.prefix);
   if (prefix) result.prefix = prefix;
   if (headers) result.headers = headers;

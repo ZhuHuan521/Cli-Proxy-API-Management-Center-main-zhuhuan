@@ -47,6 +47,8 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(getVersion())
   },
   resolve: {
+    // The lazy CodeMirror bundle must share React's hook dispatcher with the app.
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@': path.resolve(__dirname, './src')
     }
